@@ -200,7 +200,7 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
 .dropdown-menu {
   position:absolute;
   right:0;
-  top:60px;
+  top:70px;
   width:340px;
   max-height:420px;
   background: var(--card-bg);
@@ -260,7 +260,7 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
   content: "";
   position: absolute;
   top: -10px;
-  right: 34px; /* Adjust to align with bell icon */
+  right: 24px; /* Adjust to align with bell icon */
   width: 16px;
   height: 16px;
   background: var(--card-bg);
