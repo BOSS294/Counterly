@@ -354,21 +354,150 @@ function compute_txn_checksum($account_id, $txn_date, $amount_paise, $reference,
     return hash('sha256', $canon);
 }
 function parse_hdfc_text_to_txns($rawText){
-    $lines = preg_split('/\r?\n/', safe_string($rawText));
+    $lines = preg_split('/\r?\n/u', safe_string($rawText));
     $txns = [];
+    $nlines = count($lines);
+
+    // Try to detect header row (first occurrence)
+    $headerIndex = null;
+    $headerLine = '';
+    for ($i = 0; $i < $nlines; $i++) {
+        $ln = $lines[$i];
+        if (preg_match('/\bDate\b.*\bValue Dt\b.*\bWithdrawal\b.*\bDeposit\b.*\bClosing Balance\b/i', $ln)) {
+            $headerIndex = $i;
+            $headerLine = $ln;
+            break;
+        }
+    }
+
+    if ($headerIndex !== null) {
+        // compute column positions from header line using mb functions
+        $hl = $headerLine;
+        $datePos = mb_strpos($hl, 'Date') !== false ? mb_strpos($hl, 'Date') : 0;
+        $narrPos = mb_strpos($hl, 'Narration') !== false ? mb_strpos($hl, 'Narration') : ($datePos + 10);
+        $refPos  = mb_strpos($hl, 'Chq') !== false ? mb_strpos($hl, 'Chq') : (mb_strpos($hl, 'Ref') !== false ? mb_strpos($hl, 'Ref') : $narrPos + 40);
+        $valPos  = mb_strpos($hl, 'Value Dt') !== false ? mb_strpos($hl, 'Value Dt') : (mb_strpos($hl, 'Value') !== false ? mb_strpos($hl, 'Value') : $refPos + 20);
+        $withPos = mb_strpos($hl, 'Withdrawal') !== false ? mb_strpos($hl, 'Withdrawal') : (mb_strpos($hl, 'Withdrawal Amt') !== false ? mb_strpos($hl, 'Withdrawal Amt') : $valPos + 10);
+        $depPos  = mb_strpos($hl, 'Deposit') !== false ? mb_strpos($hl, 'Deposit') : $withPos + 18;
+        $balPos  = mb_strpos($hl, 'Closing Balance') !== false ? mb_strpos($hl, 'Closing Balance') : $depPos + 18;
+
+        // Normalise to integers
+        $positions = [
+            'date' => intval($datePos),
+            'narr' => intval($narrPos),
+            'ref'  => intval($refPos),
+            'val'  => intval($valPos),
+            'with' => intval($withPos),
+            'dep'  => intval($depPos),
+            'bal'  => intval($balPos)
+        ];
+
+        // Walk lines and parse by columns. Transaction start lines begin with a date at col 0 (or after small spaces)
+        for ($i = 0; $i < $nlines; $i++) {
+            $raw = $lines[$i];
+            $trim = safe_trim($raw);
+            if ($trim === '') continue;
+            // Skip known header/footer phrases
+            if (preg_match('/hdfc bank ltd|page no\.|statement of accounts|statement from|statement summary|opening balance|dr count|cr count|\*\*continue\*\*/iu', $trim)) continue;
+
+            // detect date at line start (e.g., 01/09/25 or 01-09-2025)
+            if (preg_match('/^\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\b/u', $raw, $dm)) {
+                // Extract columns using positions (use mb_substr)
+                $lnlen = mb_strlen($raw);
+                $slice = function($start, $end=null) use ($raw, $lnlen) {
+                    if ($start >= $lnlen) return '';
+                    if ($end === null) return rtrim(mb_substr($raw, $start));
+                    $len = max(0, $end - $start);
+                    return rtrim(mb_substr($raw, $start, $len));
+                };
+
+                $dateRaw = safe_trim(mb_substr($raw, $positions['date'], max(10, $positions['narr'] - $positions['date'])));
+                $narration = safe_trim($slice($positions['narr'], $positions['ref']));
+                $refField  = safe_trim($slice($positions['ref'], $positions['val']));
+                $valueDt   = safe_trim($slice($positions['val'], $positions['with']));
+                $withdraw  = safe_trim($slice($positions['with'], $positions['dep']));
+                $deposit   = safe_trim($slice($positions['dep'], $positions['bal']));
+                $balance   = safe_trim($slice($positions['bal']));
+
+                // If next lines are continuation lines (do not start with a date), append their narration column slice
+                $j = $i + 1;
+                while ($j < $nlines) {
+                    $next = $lines[$j];
+                    if ($next === null) break;
+                    if (preg_match('/^\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\b/u', $next)) break; // new txn
+                    $cont = safe_trim(mb_substr($next, $positions['narr'], max(0, $positions['ref'] - $positions['narr'])));
+                    if ($cont !== '') {
+                        $narration .= ' ' . preg_replace('/\s+/', ' ', $cont);
+                    }
+                    $j++;
+                }
+                // advance outer loop to j-1
+                $i = $j - 1;
+
+                // Normalize date to YYYY-MM-DD
+                $txn_date = null;
+                if (preg_match('/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/', $dateRaw, $ddm)) {
+                    $dd = str_pad($ddm[1],2,'0',STR_PAD_LEFT);
+                    $mm = str_pad($ddm[2],2,'0',STR_PAD_LEFT);
+                    $yy = $ddm[3];
+                    if (strlen($yy) === 2) $yy = '20' . $yy;
+                    $txn_date = "$yy-$mm-$dd";
+                }
+
+                // Convert amounts to paise using existing helper, but only if token looks monetary (contains digits and dot or comma)
+                $withdraw_val = ($withdraw === '' ? null : preg_replace('/[^0-9\.,\-]/','', $withdraw));
+                $deposit_val = ($deposit === '' ? null : preg_replace('/[^0-9\.,\-]/','', $deposit));
+                $balance_val = ($balance === '' ? null : preg_replace('/[^0-9\.,\-]/','', $balance));
+
+                $withdraw_paise = ($withdraw_val === '' ? null : normalize_amount_to_paise($withdraw_val));
+                $deposit_paise  = ($deposit_val === '' ? null : normalize_amount_to_paise($deposit_val));
+                $balance_paise  = ($balance_val === '' ? 0 : normalize_amount_to_paise($balance_val));
+
+                // Determine txn type (only one side should be present)
+                $txn_type = 'other';
+                if ($withdraw_paise !== null && $withdraw_paise > 0) $txn_type = 'debit';
+                else if ($deposit_paise !== null && $deposit_paise > 0) $txn_type = 'credit';
+
+                // Build clean narration (collapse whitespace)
+                $narr_clean = preg_replace('/\s+/', ' ', $narration);
+
+                // Extract reference from refField if present (some files may have id there)
+                $reference = null;
+                if ($refField !== '') {
+                    if (preg_match('/([A-Za-z0-9\-\/]{6,})/', $refField, $rm)) $reference = $rm[1];
+                }
+
+                $amount_paise = $withdraw_paise !== null ? $withdraw_paise : ($deposit_paise !== null ? $deposit_paise : 0);
+
+                $txns[] = [
+                    'txn_date' => $txn_date,
+                    'narration' => $narr_clean,
+                    'raw_line' => safe_trim($raw),
+                    'reference' => $reference,
+                    'txn_type' => $txn_type,
+                    'amount_paise' => $amount_paise,
+                    'debit_paise' => $withdraw_paise,
+                    'credit_paise' => $deposit_paise,
+                    'balance_paise' => $balance_paise
+                ];
+            }
+        }
+
+        return $txns;
+    }
+
+    // FALLBACK: header not found — use regex-based approach (improved)
     $buffer = null;
     foreach ($lines as $ln) {
         $ln_trim = safe_trim($ln);
         if ($ln_trim === '') continue;
-        // A new transaction line starts with a date at the line beginning
-        if (preg_match('/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\s+/', $ln_trim)) {
+        if (preg_match('/^\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(.+)$/u', $ln_trim)) {
             if ($buffer !== null) {
                 $tx = process_buffer_line($buffer);
                 if ($tx) $txns[] = $tx;
             }
             $buffer = $ln_trim;
         } else {
-            // continuation of previous narration -> append (preserve single space)
             if ($buffer === null) continue;
             $buffer .= ' ' . $ln_trim;
         }
