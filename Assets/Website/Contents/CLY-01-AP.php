@@ -213,7 +213,7 @@ if (!$clientId) {
     <div class="auth-panel" role="region" aria-labelledby="authHead">
       <h1 id="authHead">Sign in to CounterLy</h1>
       <p class="desc">Use your Google account to create or access your CounterLy workspace. Your statements and parsing history are private and auditable.</p>
-      <a class="google-btn" id="googleSignBtn" href="/Assets/Website/Api/auth_start.php" title="Continue with Google" rel="nofollow">
+      <a class="google-btn" id="googleSignBtn" title="Continue with Google" rel="nofollow">
         <svg width="20" height="20" viewBox="0 0 533.5 544.3" class="google-svg" aria-hidden="true" focusable="false">
           <path fill="#4285F4" d="M533.5 278.4c0-17.4-1.4-34.1-4.1-50.4H272v95.5h146.9c-6.4 34.4-26.1 63.6-55.6 83.2v68.9h89.7c52.6-48.4 82.5-120.1 82.5-197.2z"/>
           <path fill="#34A853" d="M272 544.3c73.6 0 135.6-24.4 180.8-66.3l-89.7-68.9c-25 17-57 27.1-91.1 27.1-69.9 0-129.3-47.2-150.6-110.4H29.9v69.7C75.3 486 167.6 544.3 272 544.3z"/>
