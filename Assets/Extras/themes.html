@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Premium Dark Themes — Theme Switcher Demo</title>
+  <!-- Google Fonts (10 different fonts for each theme) -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Montserrat:wght@300;400;600;700&family=Poppins:wght@300;400;600;700&family=DM+Sans:wght@300;400;700&family=Playfair+Display:wght@400;700&family=Source+Sans+3:wght@300;400;600&family=Lato:wght@300;400;700&family=Roboto+Slab:wght@300;400;700&family=Merriweather:wght@300;400;700&family=Raleway:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <meta name="description" content="10 Premium Dark Exclusive Themes — demo page with theme switcher" />
+  <style>
+    /* Basic resets */
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      font-family: var(--font, 'Inter'), system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
+      background:var(--bg, #0b0f14);
+      color:var(--text, #e6eef8);
+      transition:background 450ms ease, color 300ms ease;
+      -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing: grayscale;
+      padding:40px 24px;
+    }
+
+    /* Theme container */
+    .app{
+      max-width:1800px;
+      margin:0 auto;
+      display:grid;
+      grid-template-columns: 1fr 360px;
+      gap:28px;
+      align-items:start;
+    }
+
+    header.site-hero{
+      grid-column:1 / span 2;
+      display:flex;
+      align-items:center;
+      gap:18px;
+      margin-bottom:6px;
+    }
+
+    .logo{
+      width:72px;height:72px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px;color:var(--bg);background:linear-gradient(135deg,var(--accent),var(--accent-2, rgba(255,255,255,0.06)));box-shadow:0 8px 30px rgba(0,0,0,0.5);
+    }
+
+    h1{margin:0;font-size:28px;line-height:1.06;font-weight:700;font-family:var(--font, 'Inter')}
+    p.lead{margin:4px 0 0;color:var(--muted,rgba(255,255,255,0.6));}
+
+    /* Cards & content */
+    .left {background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.04)); padding:22px;border-radius:18px;box-shadow: 0 6px 28px rgba(0,0,0,0.65);}
+    .right {background:linear-gradient(180deg, rgba(255,255,255,0.01), rgba(0,0,0,0.06)); padding:18px;border-radius:14px;min-height:280px}
+
+    .cards{display:flex;gap:14px;margin-top:18px}
+    .card{flex:1;padding:14px;border-radius:12px;background:var(--card, rgba(255,255,255,0.02));backdrop-filter: blur(6px);box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);}
+    .card h3{margin:0;font-size:14px}
+    .card p{margin:8px 0 0;color:var(--muted)}
+
+    .transactions{margin-top:20px;border-radius:12px;overflow:hidden}
+    .txn{display:flex;justify-content:space-between;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,0.03)}
+    .txn:last-child{border-bottom:0}
+    .txn .left-col{display:flex;gap:12px;align-items:center}
+    .avatar{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:700;background:linear-gradient(135deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));}
+    .txn .meta{font-size:13px}
+    .amount{font-weight:700}
+    .amount.debit{color:var(--danger, #fb7185)}
+    .amount.credit{color:var(--accent, #7c5cff)}
+
+    /* Buttons base */
+    .btn{display:inline-flex;align-items:center;gap:10px;padding:10px 16px;border-radius:12px;font-weight:600;cursor:pointer;user-select:none;border:0;outline:0;transition:all 220ms cubic-bezier(.2,.9,.3,1);}
+    .btn:active{transform:translateY(1px)}
+
+    /* Primary/Secondary styles use vars; each theme overrides */
+    .btn-primary{
+      background:var(--btn-bg);
+      color:var(--btn-text);
+      box-shadow:var(--btn-shadow, 0 6px 20px rgba(0,0,0,0.6));
+      border:var(--btn-border, 0);
+    }
+    .btn-secondary{
+      background:transparent;color:var(--btn-text);border:1px solid rgba(255,255,255,0.06);backdrop-filter:blur(4px)
+    }
+
+    /* Floating theme switcher */
+    .theme-switcher{position:fixed;right:18px;bottom:18px;z-index:999;display:flex;flex-direction:column;align-items:flex-end;gap:10px}
+    .theme-switcher .switch-btn{width:64px;height:64px;border-radius:14px;display:flex;align-items:center;justify-content:center;box-shadow:0 10px 30px rgba(0,0,0,0.5);cursor:pointer;background:var(--accent);color:var(--bg);border:0}
+    .theme-indicator{font-size:12px;padding:8px 12px;border-radius:999px;background:rgba(0,0,0,0.32);color:var(--text)}
+
+    /* Theme names */
+    .theme-name{font-size:12px;color:var(--muted);}
+
+    /* Responsive */
+    @media (max-width:960px){
+      .app{grid-template-columns:1fr; padding-bottom:120px}
+      header.site-hero{flex-direction:row}
+    }
+
+    /* ------------- THEME VARIANTS ------------- */
+    /* Each theme sets accent, accent-2, bg, card, text, muted, font and button vars */
+
+    /* Theme 1: Neon Indigo (Inter) */
+    .theme-1{--font: 'Inter', sans-serif;--bg:linear-gradient(180deg,#05060a,#071026);--card:rgba(255,255,255,0.02);--text:#e8f0ff;--muted:rgba(232,240,255,0.6);--accent:#7c5cff;--accent-2:#3df0ff;--danger:#ff6b6b;--btn-bg:linear-gradient(90deg, #7c5cff, #3df0ff);--btn-text:#071026;--btn-shadow:0 10px 30px rgba(124,92,255,0.18)}
+
+    /* Theme 2: Deep Emerald (Montserrat) */
+    .theme-2{--font: 'Montserrat', sans-serif;--bg:linear-gradient(180deg,#04140f,#071a14);--card:rgba(255,255,255,0.02);--text:#e9fff6;--muted:rgba(233,255,246,0.62);--accent:#1dd1a1;--accent-2:#11b391;--danger:#ff7b7b;--btn-bg:linear-gradient(180deg,#12b886,#0aa06f);--btn-text:#082018;--btn-shadow:0 8px 28px rgba(17,169,132,0.16)}
+
+    /* Theme 3: Royal Glass (Poppins) */
+    .theme-3{--font: 'Poppins', sans-serif;--bg:linear-gradient(180deg,#081018,#0b1220);--card:rgba(255,255,255,0.02);--text:#eaf2ff;--muted:rgba(234,242,255,0.6);--accent:#ff6bcb;--accent-2:#6b8bff;--danger:#ff7a7a;--btn-bg:linear-gradient(90deg,#ff6bcb,#6b8bff);--btn-text:#0a0f18;--btn-shadow:0 12px 30px rgba(107,139,255,0.12)}
+
+    /* Theme 4: Carbon Minimal (DM Sans) */
+    .theme-4{--font: 'DM Sans', sans-serif;--bg:linear-gradient(180deg,#0b0b0b,#0f1113);--card:rgba(255,255,255,0.01);--text:#e7e7e7;--muted:rgba(231,231,231,0.54);--accent:#ffa94d;--accent-2:#ff7b00;--danger:#ff6b6b;--btn-bg:#141416;--btn-text:#ffa94d;--btn-border:1px solid rgba(255,169,77,0.06);--btn-shadow:0 6px 14px rgba(255,169,77,0.06)}
+
+    /* Theme 5: Violet Matrix (Playfair Display) */
+    .theme-5{--font:'Playfair Display', serif;--bg:linear-gradient(180deg,#0c0210,#1a0520);--card:rgba(255,255,255,0.02);--text:#f6edff;--muted:rgba(246,237,255,0.6);--accent:#9b5cff;--accent-2:#5c3cff;--danger:#ff7b7b;--btn-bg:linear-gradient(90deg,#7f4bff,#c08bff);--btn-text:#0d0410;--btn-shadow:0 14px 35px rgba(157,101,255,0.14)}
+
+    /* Theme 6: Slate Blue (Source Sans 3) */
+    .theme-6{--font:'Source Sans 3', ui-sans-serif,system-ui;--bg:linear-gradient(180deg,#071026,#08142a);--card:rgba(255,255,255,0.02);--text:#e9f1ff;--muted:rgba(233,241,255,0.6);--accent:#4ea8ff;--accent-2:#6bc1ff;--danger:#ff6b6b;--btn-bg:linear-gradient(180deg,#2f66ff,#5fb1ff);--btn-text:#061028;--btn-shadow:0 10px 28px rgba(79,139,255,0.12)}
+
+    /* Theme 7: Graphite Amber (Lato) */
+    .theme-7{--font:'Lato', sans-serif;--bg:linear-gradient(180deg,#0b0b0d,#121112);--card:rgba(255,255,255,0.015);--text:#fff8f0;--muted:rgba(255,248,240,0.56);--accent:#ffb86b;--accent-2:#ff945e;--danger:#ff7a7a;--btn-bg:linear-gradient(90deg,#ffb86b,#ff945e);--btn-text:#1a0f00;--btn-shadow:0 10px 26px rgba(255,184,107,0.12)}
+
+    /* Theme 8: Midnight Cyan (Roboto Slab) */
+    .theme-8{--font:'Roboto Slab', serif;--bg:linear-gradient(180deg,#02121a,#041824);--card:rgba(255,255,255,0.02);--text:#eafcff;--muted:rgba(234,252,255,0.6);--accent:#00d4ff;--accent-2:#00a3ff;--danger:#ff6b6b;--btn-bg:linear-gradient(90deg,#00d4ff,#00a3ff);--btn-text:#051b22;--btn-shadow:0 12px 36px rgba(0,212,255,0.08)}
+
+    /* Theme 9: Obsidian Ruby (Merriweather) */
+    .theme-9{--font:'Merriweather', serif;--bg:linear-gradient(180deg,#060203,#1b0408);--card:rgba(255,255,255,0.02);--text:#ffeef1;--muted:rgba(255,238,241,0.6);--accent:#ff416c;--accent-2:#ff7a5c;--danger:#ff8a8a;--btn-bg:linear-gradient(90deg,#ff416c,#ff7a5c);--btn-text:#12020a;--btn-shadow:0 12px 32px rgba(255,65,108,0.10)}
+
+    /* Theme 10: Cosmic Steel (Raleway) */
+    .theme-10{--font:'Raleway', sans-serif;--bg:linear-gradient(180deg,#08131a,#0b1b24);--card:rgba(255,255,255,0.02);--text:#e9f3ff;--muted:rgba(233,243,255,0.62);--accent:#9be7ff;--accent-2:#6ad1ff;--danger:#ff7a7a;--btn-bg:linear-gradient(90deg,#9be7ff,#6ad1ff);--btn-text:#04121a;--btn-shadow:0 10px 26px rgba(107,231,255,0.08)}
+
+    /* Special per-theme button hover/active effects (distinct) */
+    .theme-1 .btn-primary:hover{transform:translateY(-3px) scale(1.02);filter:brightness(1.06);box-shadow:0 20px 60px rgba(61,240,255,0.12)}
+    .theme-2 .btn-primary:hover{transform:translateY(-2px);box-shadow:0 18px 46px rgba(17,169,132,0.12)}
+    .theme-3 .btn-primary{border-radius:18px}
+    .theme-3 .btn-primary:hover{background-position:100% 50%;transform:translateY(-2px)}
+    .theme-4 .btn-primary{background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(0,0,0,0.12));color:var(--btn-text);}
+    .theme-4 .btn-primary:hover{box-shadow:0 8px 24px rgba(255,169,77,0.06);transform:translateY(-1px)}
+    .theme-5 .btn-primary{padding:14px 20px;border-radius:14px}
+    .theme-5 .btn-primary:hover{transform:scale(1.03) rotate(-0.6deg)}
+    .theme-6 .btn-primary{border-radius:10px}
+    .theme-6 .btn-primary:hover{box-shadow:0 16px 48px rgba(95,177,255,0.12);transform:translateY(-3px)}
+    .theme-7 .btn-primary{box-shadow:0 18px 60px rgba(255,148,94,0.08)}
+    .theme-7 .btn-primary:hover{transform:translateY(-4px) rotate(-1deg)}
+    .theme-8 .btn-primary{border-radius:8px}
+    .theme-8 .btn-primary:hover{transform:translateY(-3px) skewX(-2deg);box-shadow:0 20px 60px rgba(0,163,255,0.12)}
+    .theme-9 .btn-primary{border-radius:999px}
+    .theme-9 .btn-primary:hover{outline:6px solid rgba(255,65,108,0.06);transform:scale(1.02)}
+    .theme-10 .btn-primary{box-shadow:inset 0 -6px 16px rgba(0,0,0,0.36)}
+    .theme-10 .btn-primary:hover{transform:translateY(-2px) perspective(600px) rotateX(4deg)}
+
+    /* subtle accent for avatars */
+    .avatar{background:linear-gradient(135deg,rgba(255,255,255,0.02),rgba(0,0,0,0.04));color:var(--text)}
+  </style>
+</head>
+<body class="theme-1">
+  <div class="app">
+    <header class="site-hero">
+      <div class="logo">GEM</div>
+      <div>
+        <h1>Statement Summarize — Theme Preview</h1>
+        <p class="lead">10 premium dark themes. Click the palette at the bottom-right to cycle. Each theme has its own font, button style & hover effects.</p>
+      </div>
+      <div style="margin-left:auto;text-align:right">
+        <div class="theme-name">Current theme: <strong id="currentTheme">Neon Indigo</strong></div>
+        <div style="font-size:12px;color:var(--muted);">Fonts: 10 premium web fonts loaded</div>
+      </div>
+    </header>
+
+    <main class="left">
+      <section class="intro">
+        <h2 style="margin:0 0 6px">Overview</h2>
+        <p style="margin:0;color:var(--muted)">This is a single-page demo to preview 10 distinct dark themes. The UI components below show card styles, avatars, and primary/secondary buttons — each styled per theme.</p>
+
+        <div class="cards">
+          <div class="card">
+            <h3>USER1</h3>
+            <p>All transactions with <strong>USER1</strong>. Total: <strong>₹24,560.00</strong></p>
+            <div style="margin-top:12px">
+              <button class="btn btn-primary">Primary Action</button>
+              <button class="btn btn-secondary">Secondary</button>
+            </div>
+          </div>
+          <div class="card">
+            <h3>UPI: merchant@ok</h3>
+            <p>Payments to <strong>merchant@ok</strong>. Total: <strong>₹12,400.00</strong></p>
+            <div style="margin-top:12px">
+              <button class="btn btn-primary">Pay Again</button>
+            </div>
+          </div>
+          <div class="card">
+            <h3>USER3</h3>
+            <p>Incoming transfers from <strong>USER3</strong>. Total: <strong>₹6,220.00</strong></p>
+            <div style="margin-top:12px">
+              <button class="btn btn-primary">View</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="transactions" aria-live="polite">
+          <div style="padding:12px 14px;background:transparent;color:var(--muted);font-size:13px">Recent transactions</div>
+          <div class="txn">
+            <div class="left-col">
+              <div class="avatar">U1</div>
+              <div class="meta">
+                <div style="font-weight:600">USER1</div>
+                <div style="font-size:12px;color:var(--muted)">24 Sep 2025 • UPI/merchant</div>
+              </div>
+            </div>
+            <div class="amount debit">-₹1,250.00</div>
+          </div>
+          <div class="txn">
+            <div class="left-col">
+              <div class="avatar">M</div>
+              <div class="meta">
+                <div style="font-weight:600">merchant@ok</div>
+                <div style="font-size:12px;color:var(--muted)">20 Sep 2025 • IMPS</div>
+              </div>
+            </div>
+            <div class="amount debit">-₹3,600.00</div>
+          </div>
+          <div class="txn">
+            <div class="left-col">
+              <div class="avatar">U3</div>
+              <div class="meta">
+                <div style="font-weight:600">USER3</div>
+                <div style="font-size:12px;color:var(--muted)">10 Sep 2025 • NEFT</div>
+              </div>
+            </div>
+            <div class="amount credit">+₹6,220.00</div>
+          </div>
+        </div>
+
+      </section>
+    </main>
+
+    <aside class="right">
+      <h3 style="margin:0 0 8px">Quick insights</h3>
+      <p style="margin:0 0 12px;color:var(--muted)">Top counterparties this month</p>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex;gap:10px;align-items:center"><div class="avatar">U1</div><div><div style="font-weight:700">USER1</div><div style="font-size:12px;color:var(--muted)">8 txns</div></div></div><div style="font-weight:800;color:var(--accent)">₹24,560</div></div>
+        <div style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex;gap:10px;align-items:center"><div class="avatar">M</div><div><div style="font-weight:700">merchant@ok</div><div style="font-size:12px;color:var(--muted)">5 txns</div></div></div><div style="font-weight:800;color:var(--accent)">₹12,400</div></div>
+        <div style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex;gap:10px;align-items:center"><div class="avatar">U3</div><div><div style="font-weight:700">USER3</div><div style="font-size:12px;color:var(--muted)">3 txns</div></div></div><div style="font-weight:800;color:var(--accent)">₹6,220</div></div>
+      </div>
+
+      <div style="margin-top:18px">
+        <button class="btn btn-primary" style="width:100%">Export CSV</button>
+      </div>
+
+    </aside>
+  </div>
+
+  <!-- floating theme switcher -->
+  <div class="theme-switcher" role="toolbar" aria-label="Theme switcher">
+    <div class="theme-indicator" id="themeIndicator">Theme 1 / 10</div>
+    <button class="switch-btn" id="themeToggle" title="Cycle themes" aria-pressed="false">🎨</button>
+  </div>
+
+  <script>
+    (function(){
+      const themes = [
+        {id:'theme-1', name:'Neon Indigo'},
+        {id:'theme-2', name:'Deep Emerald'},
+        {id:'theme-3', name:'Royal Glass'},
+        {id:'theme-4', name:'Carbon Minimal'},
+        {id:'theme-5', name:'Violet Matrix'},
+        {id:'theme-6', name:'Slate Blue'},
+        {id:'theme-7', name:'Graphite Amber'},
+        {id:'theme-8', name:'Midnight Cyan'},
+        {id:'theme-9', name:'Obsidian Ruby'},
+        {id:'theme-10', name:'Cosmic Steel'}
+      ];
+
+      let idx = 0;
+      const body = document.body;
+      const themeToggle = document.getElementById('themeToggle');
+      const indicator = document.getElementById('themeIndicator');
+      const currentThemeLabel = document.getElementById('currentTheme');
+
+      // Load saved
+      try{
+        const saved = localStorage.getItem('selectedThemeIndex');
+        if(saved !== null){ idx = parseInt(saved,10) % themes.length; }
+      }catch(e){/*ignore*/}
+
+      function applyTheme(i){
+        idx = i % themes.length;
+        // remove existing theme- classes
+        themes.forEach(t=> body.classList.remove(t.id));
+        body.classList.add(themes[idx].id);
+        indicator.textContent = `Theme ${idx+1} / ${themes.length}`;
+        currentThemeLabel.textContent = themes[idx].name;
+        try{ localStorage.setItem('selectedThemeIndex', idx); }catch(e){}
+      }
+
+      themeToggle.addEventListener('click', ()=>{
+        applyTheme((idx+1) % themes.length);
+        themeToggle.animate([{transform:'rotate(0deg)'},{transform:'rotate(360deg)'}],{duration:420});
+      });
+
+      // allow number keys 1-9,0 to jump (1..10)
+      window.addEventListener('keydown', (e)=>{
+        if(e.key >= '0' && e.key <= '9'){
+          e.preventDefault();
+          const n = parseInt(e.key,10);
+          const target = (n === 0) ? 9 : (n-1);
+          applyTheme(target);
+        }
+      });
+
+      // initialize
+      applyTheme(idx);
+    })();
+  </script>
+</body>
+</html>
