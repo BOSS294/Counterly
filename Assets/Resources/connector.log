@@ -1,0 +1,2 @@
+{"ts":"2025-09-23 18:05:02","level":"info","action":"audit","meta":{"action":"signup","object":"user","object_id":1}}
+{"ts":"2025-09-23 19:05:39","level":"info","action":"audit","meta":{"action":"signup","object":"user","object_id":2}}
