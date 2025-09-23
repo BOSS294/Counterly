@@ -1,9 +1,6 @@
 <?php
-// upload_api.php
-// Full API: upload, upload_text, status, get_groups, promote, merge_alias,
-// add_account, list_accounts.
-// Defensive trim() usage; DEBUG flag to show DB errors during local debugging.
-// Uses DB connector (Assets/Connectors/connector.php) and its logAudit/logParse.
+// upload_api.php (patched to avoid trim(null) issues)
+// NOTE: Replace existing file with this. Keep connector path same as your environment.
 
 declare(strict_types=1);
 ini_set('display_errors', '0');
@@ -13,7 +10,7 @@ header('Content-Type: application/json; charset=utf-8');
 session_start();
 
 // === CONFIG ===
-const DEBUG = false; // set to true temporarily for debugging only (DO NOT enable in production)
+const DEBUG = false;
 const CONNECTOR_PATH = __DIR__ . '/../../Connectors/connector.php';
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024; // 20 MB
 
@@ -28,7 +25,10 @@ function getJsonInput(): array {
     $data = json_decode($raw, true);
     return is_array($data) ? $data : [];
 }
+// safe_trim: always returns string (never null) and trims whitespace
 function safe_trim($v): string { return trim((string)($v ?? '')); }
+// safe_string: ensure string type
+function safe_string($v): string { return (string)($v ?? ''); }
 
 // === connector ===
 if (!is_readable(CONNECTOR_PATH)) {
@@ -58,7 +58,6 @@ try {
         default: jsonResp(400, ['success'=>false, 'error'=>'Unknown action']);
     }
 } catch (Throwable $e) {
-    // global fallback (log)
     try { $db->logParse(null, 'error', 'api_unhandled_exception', ['action'=>$action,'err'=>$e->getMessage()], $_SESSION['user_id'] ?? null); } catch (Throwable $_) {}
     jsonResp(500, ['success'=>false, 'error'=>'Server error']);
 }
@@ -78,7 +77,6 @@ function validate_csrf($token): bool {
 function api_upload($db) {
     $userId = require_auth($db);
 
-    // CSRF token required
     $csrf = $_POST['csrf_token'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? null;
     if (!validate_csrf($csrf)) jsonResp(403, ['success'=>false,'error'=>'Invalid CSRF token']);
 
@@ -94,10 +92,8 @@ function api_upload($db) {
         jsonResp(400, ['success'=>false,'error'=>'Invalid file type']);
     }
 
-    // which account is this for? optional
     $account_id = isset($_POST['account_id']) ? intval($_POST['account_id']) : null;
 
-    // store file
     $uploaddir = __DIR__ . '/../../Uploads';
     if (!is_dir($uploaddir) && !mkdir($uploaddir, 0700, true)) jsonResp(500, ['success'=>false,'error'=>'Server storage error']);
     $userdir = $uploaddir . '/statements/' . intval($userId);
@@ -112,7 +108,6 @@ function api_upload($db) {
 
     $sha = hash_file('sha256', $stored);
 
-    // duplicate check by sha and user
     try {
         $existing = $db->fetch('SELECT id, parse_status FROM statements WHERE file_sha256 = ? AND user_id = ? LIMIT 1', [$sha, $userId]);
         if ($existing) {
@@ -120,11 +115,9 @@ function api_upload($db) {
             jsonResp(200, ['success'=>true,'statement_id'=>$existing['id'],'note'=>'duplicate_file']);
         }
     } catch (Throwable $e) {
-        // warn and continue
         try { $db->writeLocalLog('warning','duplicate_check_failed',['err'=>$e->getMessage()]); } catch (Throwable $_) {}
     }
 
-    // insert statement
     try {
         $stmtId = $db->insertAndGetId(
             "INSERT INTO statements (user_id, account_id, filename, storage_path, file_size, file_sha256, parse_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'uploaded', NOW(), NOW())",
@@ -138,18 +131,15 @@ function api_upload($db) {
         jsonResp(500, ['success'=>false,'error'=>'DB insert failed']);
     }
 
-    // optional compress param
     $compress = ($_POST['compress'] ?? '') === '1' ? true : false;
     if ($compress) $db->logParse($stmtId,'info','requested_compress',['compress'=>true], $userId);
 
-    // parse synchronously for demo; production: queue a worker and return quickly
     try {
         parse_and_insert($db, $stmtId, $userId, $stored);
     } catch (Throwable $e) {
         $errMsg = substr($e->getMessage(), 0, 1000);
         try { $db->execute("UPDATE statements SET parse_status = 'error', error_message = ?, updated_at = NOW() WHERE id = ?", [$errMsg, $stmtId]); } catch (Throwable $_) {}
         $db->logParse($stmtId,'error','parse_failed',['err'=>$errMsg], $userId);
-        // return id so client can poll status
         jsonResp(200, ['success'=>true,'statement_id'=>$stmtId,'parse_status'=>'error','error'=>$errMsg]);
     }
 
@@ -163,7 +153,7 @@ function api_upload_text($db) {
     $pdfText = $_POST['pdf_text'] ?? '';
     $filename = $_POST['filename'] ?? 'uploaded.txt';
     $account_id = isset($_POST['account_id']) ? intval($_POST['account_id']) : null;
-    if (trim((string)$pdfText) === '') jsonResp(400, ['success'=>false,'error'=>'No PDF text provided']);
+    if (safe_trim($pdfText) === '') jsonResp(400, ['success'=>false,'error'=>'No PDF text provided']);
 
     $uploaddir = __DIR__ . '/../../Uploads/texts/' . intval($userId);
     if (!is_dir($uploaddir) && !mkdir($uploaddir, 0700, true)) jsonResp(500, ['success'=>false,'error'=>'Server storage error']);
@@ -301,20 +291,18 @@ function api_merge_alias($db) {
 
 // ---------------- Parsing helpers (defensive) ----------------
 
-function safe_string($v): string { return (string)($v ?? ''); }
-
 function normalize_narration($s){
     $s = $s ?? '';
     $t = preg_replace('/\s+/', ' ', safe_string($s));
-    $t = trim($t);
+    $t = safe_trim($t);
     $t = mb_strtolower($t, 'UTF-8');
     $t = preg_replace('/[\x00-\x1F\x7F]/u','',$t);
     return $t;
 }
 
 function normalize_amount_to_paise($amt_str){
-    $s = (string)($amt_str ?? '');
-    $s = trim(str_replace(',', '', $s));
+    $s = safe_string($amt_str);
+    $s = safe_trim(str_replace(',', '', $s));
     if ($s === '') return 0;
     $s = preg_replace('/[^0-9.\-]/','', $s);
     if ($s === '' || $s === '.') return 0;
@@ -327,31 +315,33 @@ function compute_txn_checksum($account_id, $txn_date, $amount_paise, $reference,
     return hash('sha256', $canon);
 }
 
-function extract_text_from_pdf($path){
-    $pdftotext = trim(shell_exec('which pdftotext 2>/dev/null'));
-    if ($pdftotext) {
+function extract_text_from_pdf($path): string {
+    // Return a string, never null. Throw if no extractor available.
+    $out = null;
+    $pdftotext = safe_trim(shell_exec('which pdftotext 2>/dev/null'));
+    if ($pdftotext !== '') {
         $cmd = escapeshellcmd($pdftotext) . ' -layout ' . escapeshellarg($path) . ' -';
-        $out = shell_exec($cmd);
-        if ($out !== null) return $out;
+        $out = @shell_exec($cmd);
+        if (is_string($out)) return (string)$out;
     }
-    $gs = trim(shell_exec('which gs 2>/dev/null'));
-    if ($gs) {
+    $gs = safe_trim(shell_exec('which gs 2>/dev/null'));
+    if ($gs !== '') {
         $tmp = tempnam(sys_get_temp_dir(), 'pdf-txt-');
         $cmd = escapeshellcmd($gs) . ' -q -dNODISPLAY -sOutputFile=' . escapeshellarg($tmp) . ' -sDEVICE=txtwrite -dBATCH ' . escapeshellarg($path) . ' 2>&1';
         @shell_exec($cmd);
         $txt = @file_get_contents($tmp);
         @unlink($tmp);
-        if ($txt) return $txt;
+        if (is_string($txt) && $txt !== '') return (string)$txt;
     }
     throw new RuntimeException('No PDF text extractor available on server. Install pdftotext or provide an alternative.');
 }
 
 function parse_hdfc_text_to_txns($rawText){
-    $lines = preg_split('/\r?\n/', (string)$rawText);
+    $lines = preg_split('/\r?\n/', safe_string($rawText));
     $txns = [];
     $buffer = null;
     foreach ($lines as $ln) {
-        $ln_trim = trim((string)$ln);
+        $ln_trim = safe_trim($ln);
         if ($ln_trim === '') continue;
         if (preg_match('/^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(.+)$/', $ln_trim)) {
             if ($buffer !== null) {
@@ -373,37 +363,37 @@ function parse_hdfc_text_to_txns($rawText){
 
 function process_buffer_line($line) {
     if ($line === null) return null;
-    $s = preg_replace('/\s+/', ' ', trim((string)$line));
+    $s = preg_replace('/\s+/', ' ', safe_trim($line));
     if (!preg_match('/^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(.*)$/', $s, $m)) return null;
-    $date_raw = $m[1] ?? '';
-    $rest = isset($m[2]) ? trim((string)$m[2]) : '';
+    $date_raw = isset($m[1]) ? safe_trim($m[1]) : '';
+    $rest = isset($m[2]) ? safe_trim($m[2]) : '';
 
     $dateParts = preg_split('/[\/\-]/', $date_raw);
     if (count($dateParts) >= 3) {
-        $d = str_pad($dateParts[0] ?? '',2,'0',STR_PAD_LEFT);
-        $mth = str_pad($dateParts[1] ?? '',2,'0',STR_PAD_LEFT);
-        $y = $dateParts[2] ?? '';
+        $d = str_pad(safe_trim($dateParts[0]),2,'0',STR_PAD_LEFT);
+        $mth = str_pad(safe_trim($dateParts[1]),2,'0',STR_PAD_LEFT);
+        $y = safe_trim($dateParts[2]);
         if (strlen($y) === 2) $y = '20' . $y;
         $txn_date = "$y-$mth-$d";
     } else { $txn_date = null; }
 
     if (preg_match('/(.*)\s+([\d,]+(?:\.\d{1,2})?|-)\s+([\d,]+(?:\.\d{1,2})?|-)\s+([\d,]+(?:\.\d{1,2})?)$/', $rest, $mm)) {
-        $narration = isset($mm[1]) ? trim((string)$mm[1]) : '';
+        $narration = isset($mm[1]) ? safe_trim($mm[1]) : '';
         $withdraw = isset($mm[2]) ? $mm[2] : null;
         $deposit = isset($mm[3]) ? $mm[3] : null;
         $balance = isset($mm[4]) ? $mm[4] : null;
     } else if (preg_match('/(.*)\s+([\d,]+(?:\.\d{1,2})?)\s+([\d,]+(?:\.\d{1,2})?)$/', $rest, $mm2)) {
-        $narration = isset($mm2[1]) ? trim((string)$mm2[1]) : '';
+        $narration = isset($mm2[1]) ? safe_trim($mm2[1]) : '';
         $withdraw = isset($mm2[2]) ? $mm2[2] : null;
         $deposit = '-';
         $balance = isset($mm2[3]) ? $mm2[3] : null;
     } else { return null; }
 
     $reference = null;
-    if ($narration && preg_match('/(ref[:\-\s]*|chq[:.\-\s]*|utr[:\-\s]*)([A-Za-z0-9\-\/]+)$/i', $narration, $mr)) {
-        $reference = $mr[2];
-    } else if ($narration && preg_match('/[a-z0-9.\-\_]+@[a-z0-9\-\.]+/i', $narration, $mu)) {
-        $reference = $mu[0];
+    if ($narration !== '' && preg_match('/(ref[:\-\s]*|chq[:.\-\s]*|utr[:\-\s]*)([A-Za-z0-9\-\/]+)$/i', $narration, $mr)) {
+        $reference = $mr[2] ?? null;
+    } else if ($narration !== '' && preg_match('/[a-z0-9.\-\_]+@[a-z0-9\-\.]+/i', $narration, $mu)) {
+        $reference = $mu[0] ?? null;
     }
 
     $withdraw_paise = ($withdraw === '-' || $withdraw === null ? null : normalize_amount_to_paise($withdraw));
@@ -428,7 +418,6 @@ function process_buffer_line($line) {
 function parse_and_insert($db, $stmtId, $userId, $storedPath){
     $db->execute('UPDATE statements SET parse_status = ?, updated_at = NOW() WHERE id = ?', ['parsing', $stmtId]);
 
-    // if storedPath is a text file (upload_text) -> read it; otherwise attempt extract_text_from_pdf
     $text = '';
     if (is_readable($storedPath) && strtolower(pathinfo($storedPath, PATHINFO_EXTENSION)) === 'txt') {
         $text = (string)file_get_contents($storedPath);
@@ -453,10 +442,8 @@ function parse_and_insert($db, $stmtId, $userId, $storedPath){
         throw $e;
     }
 
-    // grouping scanner
     run_grouping_scanner($db, $userId);
 
-    // finalize
     try {
         $count = $db->fetch('SELECT COUNT(*) as c FROM transactions WHERE statement_id = ?', [$stmtId])['c'] ?? 0;
         $db->execute('UPDATE statements SET parse_status = ?, parsed_at = NOW(), tx_count = ?, updated_at = NOW() WHERE id = ?', ['parsed', intval($count), $stmtId]);
