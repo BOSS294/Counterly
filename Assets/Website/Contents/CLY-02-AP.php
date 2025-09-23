@@ -1,6 +1,11 @@
-
+<?php
+// CLY-02-AP.php — Redesigned dashboard module (updated per request)
+// Changes: darker (black) shadows, removed Upload/View Statements buttons from welcome panel,
+// added Quick Actions as bordered, left-icon buttons with left-aligned text, small welcome panel improvements.
+?>
 
 <style>
+/* Scoped styles for the redesigned dashboard module */
 .dash-mod {
   display: grid;
   grid-template-columns: 1fr 380px;
@@ -16,7 +21,8 @@
   background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.03));
   border-radius: 16px;
   padding: 18px;
-  box-shadow: 0 20px 60px rgba(2,6,23,0.6);
+  /* stronger black shadows as requested */
+  box-shadow: 0 20px 60px rgba(0,0,0,0.9);
   border: 1px solid rgba(255,255,255,0.03);
 }
 
@@ -51,11 +57,14 @@
 .welcome-name { color: #FFD39B; font-weight: 900; font-size: 22px; }
 .welcome-sub { color: var(--muted); font-size: 13px; }
 
+/* subtle improvement: small tagline under welcome */
+.welcome-tagline { color: rgba(255,255,255,0.45); font-size:13px; margin-top:4px; }
+
 .role-pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,0.02); color: #FFD39B; font-weight: 800; font-size: 13px; border: 1px solid rgba(255,255,255,0.03); }
 
 .kpis-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-top: 8px; }
 .kpi-pill { padding: 14px; border-radius: 12px; display: flex; gap: 12px; align-items: center; border: 1px solid rgba(255,255,255,0.03); transition: transform .18s ease, box-shadow .18s ease; background: linear-gradient(180deg, rgba(255,255,255,0.01), rgba(0,0,0,0.02)); }
-.kpi-pill:hover { transform: translateY(-6px); box-shadow: 0 18px 48px rgba(0,0,0,0.6); }
+.kpi-pill:hover { transform: translateY(-6px); box-shadow: 0 18px 48px rgba(0,0,0,0.9); }
 .kpi-icon { font-size: 22px; width: 36px; height: 36px; display:grid; place-items:center; border-radius:8px; background: rgba(255,255,255,0.02); }
 .kpi-value { font-weight: 900; font-size: 18px; }
 .kpi-label { font-size: 12px; color: var(--muted); font-weight:700; }
@@ -74,6 +83,16 @@
 .cp-txcount { color:var(--muted); font-size:13px; }
 
 .empty-state { color: var(--muted); padding: 18px; text-align: center; border-radius: 10px; background: rgba(255,255,255,0.01); }
+
+/* Quick action buttons: bordered, no background, left icon + left-aligned text */
+.quick-actions { display:flex; flex-direction:column; gap:10px; }
+.quick-action-btn {
+  display:flex; align-items:center; gap:12px; padding:10px 12px; border-radius:10px;
+  border:1px solid rgba(255,255,255,0.06); background:transparent; color:var(--text);
+  justify-content:flex-start; text-decoration:none; font-weight:800;
+}
+.quick-action-btn i { min-width:24px; text-align:center; font-size:18px; color:var(--muted); }
+.quick-action-btn:hover { transform: translateY(-3px); box-shadow: 0 14px 36px rgba(0,0,0,0.85); }
 
 /* animations */
 @keyframes floaty { 0% { transform: translateY(0);} 50% { transform: translateY(-6px);} 100% { transform: translateY(0);} }
@@ -106,18 +125,14 @@
               <div style="font-size:18px; margin-left:6px;">✨</div>
             </div>
             <div class="welcome-sub" id="welcomeRole">Role — Member</div>
+            <div class="welcome-tagline">You're doing great — here's a quick summary of your activity.</div>
           </div>
 
           <div style="text-align:right; display:flex; flex-direction:column; gap:8px; align-items:flex-end;">
             <div class="role-pill" id="todayDate">Loading date</div>
             <div class="role-pill" id="istTime">--:--:-- IST</div>
             <div style="height:6px;"></div>
-            <div class="action-row">
-              <button class="btn--primary" id="uploadStmtBtn" title="Upload statement">
-                <i class='bx bx-upload' style="font-size:16px;"></i>&nbsp; Upload
-              </button>
-              <a href="/app/statements.php" class="btn--primary" style="text-decoration:none;">View Statements</a>
-            </div>
+            <!-- removed Upload / View Statements buttons per request -->
           </div>
         </div>
 
@@ -199,10 +214,11 @@
 
     <div class="card--glass" style="padding:12px;">
       <div style="font-weight:900; margin-bottom:8px;">Quick actions</div>
-      <div style="display:flex; gap:8px; flex-direction:column;">
-        <a href="/app/upload.php" class="btn--primary" style="text-decoration:none; display:inline-block; text-align:center;">Upload statement</a>
-        <a href="/app/counterparties.php" class="btn--primary" style="text-decoration:none; display:inline-block; text-align:center;">Manage counterparties</a>
-        <a href="/app/settings.php" class="btn--primary" style="text-decoration:none; display:inline-block; text-align:center;">Profile & settings</a>
+      <div class="quick-actions">
+        <a href="/app/upload.php" class="quick-action-btn"><i class='bx bx-upload'></i><span>Upload statement</span></a>
+        <a href="/app/counterparties.php" class="quick-action-btn"><i class='bx bx-group'></i><span>Manage counterparties</span></a>
+        <a href="/app/settings.php" class="quick-action-btn"><i class='bx bx-user'></i><span>Profile & settings</span></a>
+        <a href="/app/reports.php" class="quick-action-btn"><i class='bx bx-file-blank'></i><span>Download reports</span></a>
       </div>
     </div>
   </div>
@@ -348,4 +364,3 @@ setInterval(updateISTClock, 1000); updateISTClock();
 loadDashboard();
 
 </script>
-`
