@@ -1,24 +1,16 @@
 <?php
-// nav.php — User top navigation (theme-accurate)
-// - Uses session values set by auth_callback.php: user_id, user_name, user_email, user_avatar
-// - Defaults: user_name = "Ammer Aadmi", role = "Member"
-// - Single placeholder notification
-// - GitHub icon included
-// - Styling fully uses CSS variables from /Assets/Resources/base.css
-// - ChaGPT ka pryog
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-/* If not logged in as user -> redirect to home/sign-in page */
 if (empty($_SESSION['user_id'])) {
     header('Location: /');
     exit;
 }
 
 /* Pull session values (fallbacks) */
-$__user_name   = $_SESSION['user_name'] ?? 'Ammer Aadmi';
-$__user_role   = $_SESSION['user_role'] ?? 'Member';
+$__user_name   = $_SESSION['user_name'] ?? 'Member Hu';
+$__user_role   = $_SESSION['user_role'] ?? 'Ammer Aadmi';
 $__user_avatar = $_SESSION['user_avatar'] ?? '/Assets/Website/Images/default-avatar.png';
 
 function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
@@ -133,29 +125,26 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
 /* Right */
 .nav-right { display:flex; gap:12px; align-items:center; margin-left:auto; }
 
-/* Button baseline: visible border + subtle 3D (shadow) pre-hover */
 .btn {
   display:inline-flex;
   align-items:center;
   gap:8px;
   padding:8px 10px;
   border-radius:12px;
-  border: 1px solid rgba(255,255,255,0.03); /* subtle base border */
+  border: 1px solid rgba(255,255,255,0.03); 
   background: linear-gradient(180deg, rgba(255,255,255,0.01), rgba(0,0,0,0.02));
   transition: transform var(--transition-fast) ease, box-shadow var(--transition-fast) ease, border-color var(--transition-fast) ease, color var(--transition-fast) ease;
   color: var(--muted);
   -webkit-backdrop-filter: blur(4px);
   backdrop-filter: blur(4px);
-  box-shadow: 0 6px 18px rgba(0,0,0,0.35); /* base depth */
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35); 
 }
 
-/* Icon buttons slightly smaller */
+
 .icon-btn { padding:8px; border-radius:10px; min-width:40px; justify-content:center; }
 
-/* Make icons use theme muted color; accent on hover */
 .icon-btn i, .btn i { font-size:18px; color: var(--muted); transition: color var(--transition-fast) ease; }
 
-/* Notification badge */
 .notif-badge {
   display:inline-block;
   min-width:20px;
@@ -173,7 +162,6 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
   vertical-align:middle;
 }
 
-/* User wrap: border + layered 3D baseline then stronger on hover */
 .user-wrap { position:relative; display:flex; align-items:center; gap:10px; }
 .user-btn {
   display:flex;
@@ -182,26 +170,23 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
   padding:6px 10px;
   border-radius:999px;
   background: linear-gradient(180deg, rgba(255,255,255,0.01), rgba(0,0,0,0.03));
-  border: 1px solid rgba(255,255,255,0.04); /* visible border before hover */
-  box-shadow: 0 8px 22px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.01); /* layered depth */
+  border: 1px solid rgba(255,255,255,0.04); 
+  box-shadow: 0 8px 22px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.01);
   transition: transform var(--transition-fast) ease, box-shadow var(--transition-fast) ease, border-color var(--transition-fast) ease;
 }
 
-/* Avatar */
+
 .avatar { width:44px; height:44px; border-radius:999px; overflow:hidden; display:grid; place-items:center; border: 1px solid rgba(255,255,255,0.03); background: linear-gradient(135deg, rgba(255,255,255,0.02), rgba(0,0,0,0.02)); }
 .avatar img { width:100%; height:100%; object-fit:cover; display:block; }
 
-/* User text */
 .user-info { min-width:150px; max-width:320px; display:flex; flex-direction:column; align-items:flex-start; text-align:left; }
 .user-name { font-weight:800; font-size:14px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .user-role { font-size:12px; color:var(--muted); margin-top:2px; }
-/* User dropdown */
 .user-menu { top:56px; right:0; width:220px; padding:10px; background:var(--card-bg); }
 .dropdown-link { display:flex; align-items:center; gap:10px; padding:10px; text-decoration:none; color:var(--text); font-weight:800; border-radius:8px; }
 .dropdown-link:hover { background: linear-gradient(180deg, rgba(149,214,164,0.02), rgba(6,18,15,0.02)); color:var(--accent-2); transform: translateX(4px); }
 .dropdown-divider { height:1px; background: rgba(255,255,255,0.03); margin:6px 0; }
 
-/* Dropdowns */
 .dropdown-menu {
   position:absolute;
   right:0;
@@ -222,11 +207,10 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
 }
 .dropdown-menu.open { opacity:1; visibility:visible; transform: translateY(0); }
 
-/* Add pointer arrow for notifications dropdown */
 .notif-menu {
   position: absolute;
   right: 70px;
-  top: 88px; /* Adjust so it appears just below the bell icon */
+  top: 88px; 
   width: 340px;
   max-height: 420px;
   background: var(--card-bg);
@@ -242,19 +226,17 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
   padding: 0;
 }
 
-/* Show dropdown below icon with pointer */
 .notif-menu.open {
   opacity: 1;
   visibility: visible;
   transform: translateY(0);
 }
 
-/* Pointer arrow styling */
 .notif-menu::before {
   content: "";
   position: absolute;
   top: -12px;
-  right: 28px; /* Adjust to align with bell icon */
+  right: 28px; 
   width: 24px;
   height: 12px;
   background: transparent;
@@ -265,7 +247,7 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
   content: "";
   position: absolute;
   top: -10px;
-  right: 24px; /* Adjust to align with bell icon */
+  right: 24px; 
   width: 16px;
   height: 16px;
   background: var(--card-bg);
@@ -277,17 +259,14 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
   border-left: 1px solid rgba(255,255,255,0.03);
 }
 
-/* Dropdown interior */
 .dropdown-header { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid rgba(255,255,255,0.02); color:var(--muted); }
 .dropdown-list { overflow:auto; max-height:360px; padding:6px 0; }
 
-/* Notification item styling */
 .notif-item { display:flex; gap:12px; padding:12px 14px; align-items:flex-start; border-bottom:1px solid rgba(255,255,255,0.01); color:inherit; transition: all .12s ease; }
 .notif-icon { width:44px; height:44px; border-radius:10px; display:grid; place-items:center; background: linear-gradient(135deg, rgba(255,255,255,0.01), rgba(0,0,0,0.02)); border:1px solid rgba(255,255,255,0.02); font-size:18px; color:var(--muted); }
 .notif-title { font-weight:700; color:var(--text); }
 .notif-sub, .notif-time { color:var(--muted); font-size:13px; }
 
-/* Hover/active intensification (3D effect increases) */
 .btn:hover, .user-btn:hover, .icon-btn:hover {
   transform: translateY(-4px);
   box-shadow: 0 26px 64px rgba(0,0,0,0.7), 0 8px 22px rgba(0,0,0,0.45);
@@ -295,7 +274,6 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
 }
 .btn:hover i, .icon-btn:hover i { color: var(--accent); }
 
-/* Focus styles for keyboard */
 .btn:focus, .user-btn:focus {
   outline: 3px solid rgba(255,169,77,0.08);
   outline-offset: 3px;
@@ -310,11 +288,10 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
 @media (max-width: 560px) {
   .title-sub { display:none; }
   .notif-badge { display:none; }
-  .user-info { display:none; } /* conserve space */
+  .user-info { display:none; } 
 }
 </style>
 
-<!-- JS: notifications + user menu toggle (kept lean) -->
 <script>
 (function(){
   const notifToggle = document.getElementById('notif-toggle');
