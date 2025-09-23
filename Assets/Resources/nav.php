@@ -195,6 +195,11 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
 .user-info { min-width:150px; max-width:320px; display:flex; flex-direction:column; align-items:flex-start; text-align:left; }
 .user-name { font-weight:800; font-size:14px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .user-role { font-size:12px; color:var(--muted); margin-top:2px; }
+/* User dropdown */
+.user-menu { top:56px; right:0; width:220px; padding:10px; background:var(--card-bg); }
+.dropdown-link { display:flex; align-items:center; gap:10px; padding:10px; text-decoration:none; color:var(--text); font-weight:800; border-radius:8px; }
+.dropdown-link:hover { background: linear-gradient(180deg, rgba(149,214,164,0.02), rgba(6,18,15,0.02)); color:var(--accent-2); transform: translateX(4px); }
+.dropdown-divider { height:1px; background: rgba(255,255,255,0.03); margin:6px 0; }
 
 /* Dropdowns */
 .dropdown-menu {
