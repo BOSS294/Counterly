@@ -118,7 +118,19 @@ function renderQueue(){
     fileListEl.appendChild(row);
   });
 }
-
+async function extractPdfText(file) {
+  const pdfjsLib = window['pdfjs-dist/build/pdf'];
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js';
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  let text = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    text += content.items.map(item => item.str).join(' ') + '\n';
+  }
+  return text;
+}
 function handleFiles(list){
   for(const f of list){
     if(f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')){ alert('Only PDF files allowed: ' + f.name); continue; }
@@ -155,37 +167,42 @@ function updateProgress(idx, pct, status){
 }
 
 async function uploadFile(file, idx){
-  return new Promise((resolve) => {
-    const xhr = new XMLHttpRequest();
-    const fd = new FormData();
-    fd.append('statement_pdf', file);
-    fd.append('compress', compressCheckbox.checked ? '1' : '0');
-    fd.append('csrf_token', CSRF_TOKEN);
+  updateProgress(idx, 0, 'Extracting PDF...');
+  let pdfText = '';
+  try {
+    pdfText = await extractPdfText(file);
+  } catch (err) {
+    updateProgress(idx, 0, 'PDF extraction failed');
+    return;
+  }
+  updateProgress(idx, 10, 'Uploading text...');
+  const xhr = new XMLHttpRequest();
+  const fd = new FormData();
+  fd.append('pdf_text', pdfText);
+  fd.append('filename', file.name);
+  fd.append('csrf_token', CSRF_TOKEN);
 
-    xhr.open('POST', API_URL + '?action=upload', true);
-    xhr.withCredentials = true;
+  xhr.open('POST', API_URL + '?action=upload_text', true);
+  xhr.withCredentials = true;
 
-    xhr.upload.onprogress = function(e){ if(e.lengthComputable){ const pct = Math.round((e.loaded / e.total) * 100); updateProgress(idx, pct, 'Uploading ' + pct + '%'); } };
+  xhr.onload = function(){
+    if(xhr.status >=200 && xhr.status < 300){
+      try{
+        const res = JSON.parse(xhr.responseText);
+        if(res.success){
+          document.getElementById('status'+idx).textContent = 'Uploaded — Parsing';
+          pollParseStatus(res.statement_id, idx).then(()=> resolve());
+        } else {
+          updateProgress(idx, 0, 'Error: ' + (res.error || 'unknown'));
+        }
+      }catch(err){ updateProgress(idx, 0, 'Invalid server response'); }
+    } else {
+      updateProgress(idx, 0, 'Upload failed: ' + xhr.status);
+    }
+  };
 
-    xhr.onload = function(){
-      if(xhr.status >=200 && xhr.status < 300){
-        try{
-          const res = JSON.parse(xhr.responseText);
-          if(res.success){
-            document.getElementById('status'+idx).textContent = 'Uploaded — Parsing';
-            pollParseStatus(res.statement_id, idx).then(()=> resolve());
-          } else {
-            updateProgress(idx, 0, 'Error: ' + (res.error || 'unknown'));
-            resolve();
-          }
-        }catch(err){ updateProgress(idx, 0, 'Invalid server response'); resolve(); }
-      } else {
-        updateProgress(idx, 0, 'Upload failed: ' + xhr.status); resolve(); }
-    };
-
-    xhr.onerror = function(){ updateProgress(idx,0,'Network error'); resolve(); };
-    xhr.send(fd);
-  });
+  xhr.onerror = function(){ updateProgress(idx,0,'Network error'); };
+  xhr.send(fd);
 }
 
 async function pollParseStatus(statementId, idx){

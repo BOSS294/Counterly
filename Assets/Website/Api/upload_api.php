@@ -54,6 +54,7 @@ try {
         case 'get_groups': api_get_groups($db); break;
         case 'promote': api_promote($db); break;
         case 'merge_alias': api_merge_alias($db); break;
+        case 'upload_text': api_upload_text($db); break;
         default: jsonResp(400, ['success'=>false,'error'=>'Unknown action']);
     }
 } catch (Throwable $e) {
@@ -235,6 +236,41 @@ function api_merge_alias($db){
     } catch (Throwable $e) {
         $db->logParse(null, 'error', 'merge_alias_failed', ['err'=>$e->getMessage(),'alias'=>$alias,'cpId'=>$cpId], $userId);
         jsonResp(500, ['success'=>false,'error'=>'Server error']);
+    }
+}
+
+function api_upload_text($db){
+    $userId = require_auth($db);
+    $csrf = $_POST['csrf_token'] ?? ($_SERVER['HTTP_X_CSRF_TOKEN'] ?? null);
+    if (!validate_csrf($csrf)) {
+        jsonResp(403, ['success'=>false,'error'=>'Invalid CSRF token']);
+    }
+    $pdfText = $_POST['pdf_text'] ?? '';
+    $filename = $_POST['filename'] ?? 'uploaded.txt';
+    if (!$pdfText) {
+        jsonResp(400, ['success'=>false,'error'=>'No PDF text provided']);
+    }
+    // Save text file (optional)
+    $uploaddir = __DIR__ . '/../../Uploads/texts/' . intval($userId);
+    if (!is_dir($uploaddir) && !mkdir($uploaddir, 0700, true)) {
+        jsonResp(500, ['success'=>false,'error'=>'Server storage error']);
+    }
+    $timestamp = gmdate('Ymd_His');
+    $safeName = preg_replace('/[^A-Za-z0-9._-]/','_', basename($filename));
+    $stored = $uploaddir . '/' . $timestamp . '_' . $safeName . '.txt';
+    file_put_contents($stored, $pdfText);
+
+    // Parse and insert as before
+    try {
+        $stmtId = $db->insertAndGetId(
+            "INSERT INTO statements (user_id, filename, storage_path, file_size, file_sha256, parse_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'uploaded', NOW(), NOW())",
+            [ $userId, $filename, $stored, strlen($pdfText), hash('sha256', $pdfText) ]
+        );
+        $db->logAudit('upload_statement_text', 'statement', $stmtId, ['filename'=>$filename], $userId);
+        parse_and_insert($db, $stmtId, $userId, $stored);
+        jsonResp(200, ['success'=>true,'statement_id'=>$stmtId]);
+    } catch (Throwable $e) {
+        jsonResp(500, ['success'=>false,'error'=>'DB insert failed']);
     }
 }
 
