@@ -12,7 +12,7 @@
 /* Wrapper to keep section away from page edges and centered */
 .management-wrapper {
   max-width: var(--container-width);
-  margin: 32px auto 8px auto; /* space from top and center */
+  margin: 42px auto 8px auto; /* space from top and center */
   padding: 0 28px; /* keep away from edges */
 }
 .management-heading {
@@ -26,13 +26,13 @@
 .management-cards {
   margin-top: 8px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
   gap: 16px;
   padding: 12px 0 40px 0;
 }
 
 /* force 4 columns on wide desktops */
-@media (min-width: 1200px) {
+@media (min-width: 1800px) {
   .management-cards { grid-template-columns: repeat(4, 1fr); }
 }
 
