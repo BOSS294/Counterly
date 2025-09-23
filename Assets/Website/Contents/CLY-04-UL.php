@@ -82,7 +82,7 @@ a.link{color:#A3BFFA;text-decoration:none}
 </div>
 
 <script>
-const API_URL = 'Assets/Website/Api/upload_api.php'; // endpoint file
+const API_URL = '/Assets/Website/Api/upload_api.php'; 
 const CSRF_TOKEN = <?php echo json_encode($csrf); ?>;
 const MAX_BYTES = 20 * 1024 * 1024;
 const dropzone = document.getElementById('dropzone');
