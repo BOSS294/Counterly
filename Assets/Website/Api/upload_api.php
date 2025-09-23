@@ -354,14 +354,30 @@ function compute_txn_checksum($account_id, $txn_date, $amount_paise, $reference,
     return hash('sha256', $canon);
 }
 
-// Note: We intentionally removed/disabled server-side PDF->text extraction (no pdftotext/gs usage).
-// parse_hdfc_text_to_txns and process_buffer_line are unchanged and assume a textual HDFC statement.
 function parse_hdfc_text_to_txns($rawText){
     $lines = preg_split('/\r?\n/', safe_string($rawText));
-    $txns = []; $buffer = null;
+    $txns = [];
+    $buffer = null;
+
     foreach ($lines as $ln) {
         $ln_trim = safe_trim($ln);
         if ($ln_trim === '') continue;
+
+        // Skip known header lines and page boilerplate
+        if (preg_match('/hdfc bank ltd|statement of accounts|page no\.?:|account branch|account no|statement from|statement to|a\/c open date|cust id|branch code|product code|rtgs\/neft ifsc/i', $ln_trim)) {
+            continue;
+        }
+        // Skip column header separators and lines
+        if (preg_match('/^-{2,}|^date\s+narration|^--------|^\*\*continue\*\*/i', $ln_trim)) {
+            continue;
+        }
+
+        // Stop parsing when footer statement summary appears
+        if (preg_match('/statement summary|opening balance.*debits.*credits|dr count|cr count|statement summary\s*:-/i', $ln_trim)) {
+            break;
+        }
+
+        // Transaction lines usually start with a date in dd/mm/yy or dd-mm-yyyy etc.
         if (preg_match('/^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(.+)$/', $ln_trim)) {
             if ($buffer !== null) {
                 $tx = process_buffer_line($buffer);
@@ -369,17 +385,22 @@ function parse_hdfc_text_to_txns($rawText){
             }
             $buffer = $ln_trim;
         } else {
-            if ($buffer === null) continue;
+            // continuation line (part of narration etc.)
+            if ($buffer === null) {
+                // stray continuation (likely page header) — ignore
+                continue;
+            }
             $buffer .= ' ' . $ln_trim;
         }
     }
+
     if ($buffer !== null) {
         $tx = process_buffer_line($buffer);
         if ($tx) $txns[] = $tx;
     }
+
     return $txns;
 }
-
 function process_buffer_line($line) {
     if ($line === null) return null;
     $s = preg_replace('/\s+/', ' ', safe_trim($line));
@@ -387,6 +408,7 @@ function process_buffer_line($line) {
     $date_raw = isset($m[1]) ? safe_trim($m[1]) : '';
     $rest = isset($m[2]) ? safe_trim($m[2]) : '';
 
+    // normalise date
     $dateParts = preg_split('/[\/\-]/', $date_raw);
     if (count($dateParts) >= 3) {
         $d = str_pad(safe_trim($dateParts[0]),2,'0',STR_PAD_LEFT);
@@ -396,23 +418,45 @@ function process_buffer_line($line) {
         $txn_date = "$y-$mth-$d";
     } else { $txn_date = null; }
 
+    // Try to capture narration + (optional) chq/ref + value dt + withdrawal + deposit + balance
+    // We look for the last three numeric groups (withdrawal, deposit, closing) if present.
     if (preg_match('/(.*)\s+([\d,]+(?:\.\d{1,2})?|-)\s+([\d,]+(?:\.\d{1,2})?|-)\s+([\d,]+(?:\.\d{1,2})?)$/', $rest, $mm)) {
         $narration = isset($mm[1]) ? safe_trim($mm[1]) : '';
         $withdraw = isset($mm[2]) ? $mm[2] : null;
         $deposit = isset($mm[3]) ? $mm[3] : null;
         $balance = isset($mm[4]) ? $mm[4] : null;
     } else if (preg_match('/(.*)\s+([\d,]+(?:\.\d{1,2})?)\s+([\d,]+(?:\.\d{1,2})?)$/', $rest, $mm2)) {
+        // sometimes there are only two number columns (withdrawal and balance or deposit and balance)
         $narration = isset($mm2[1]) ? safe_trim($mm2[1]) : '';
         $withdraw = isset($mm2[2]) ? $mm2[2] : null;
         $deposit = '-';
         $balance = isset($mm2[3]) ? $mm2[3] : null;
-    } else { return null; }
+    } else {
+        // if numbers not found at the end, attempt looser capture:
+        // There are cases where OCR/text layout places numbers differently. As a fallback, attempt to pick numbers anywhere.
+        if (preg_match_all('/([\d,]+(?:\.\d{1,2})?)/', $rest, $numM)) {
+            $nums = $numM[1];
+            $balance = end($nums);
+            $deposit = (count($nums) >= 2 ? $nums[count($nums)-2] : '-');
+            $withdraw = (count($nums) >= 3 ? $nums[count($nums)-3] : null);
+            // narration = rest with numeric groups removed
+            $narration = trim(preg_replace('/([\d,]+(?:\.\d{1,2})?)/','', $rest));
+        } else {
+            return null;
+        }
+    }
 
+    // reference extraction: ref/chq/utr or email
     $reference = null;
     if ($narration !== '' && preg_match('/(ref[:\-\s]*|chq[:.\-\s]*|utr[:\-\s]*)([A-Za-z0-9\-\/]+)$/i', $narration, $mr)) {
         $reference = $mr[2] ?? null;
     } else if ($narration !== '' && preg_match('/[a-z0-9.\-\_]+@[a-z0-9\-\.]+/i', $narration, $mu)) {
         $reference = $mu[0] ?? null;
+    } else {
+        // sometimes ref appears after narration separated by multiple spaces - try to pluck trailing token of letters/digits
+        if (preg_match('/([A-Za-z0-9]{6,})$/', $rest, $mr2)) {
+            $reference = $mr2[1];
+        }
     }
 
     $withdraw_paise = ($withdraw === '-' || $withdraw === null ? null : normalize_amount_to_paise($withdraw));
@@ -433,6 +477,7 @@ function process_buffer_line($line) {
         'balance_paise'=>$balance_paise
     ];
 }
+
 
 function parse_and_insert($db, $stmtId, $userId, $storedPath){
     // mark parsing started
@@ -494,12 +539,40 @@ function parse_and_insert($db, $stmtId, $userId, $storedPath){
 }
 
 function extract_alias_candidate($narration){
-    $n = normalize_narration($narration);
-    if (preg_match('/[a-z0-9.\-\_]+@[a-z0-9\-\.]+/i',$n,$m)) return $m[0];
-    if (preg_match('/(\d{10})/',$n,$m)) return $m[1];
-    if (preg_match('/\*{2,}([0-9]{2,4})/',$n,$m)) return 'acct_mask_'.$m[1];
-    $parts = preg_split('/\s+/', $n);
-    return implode(' ', array_slice($parts,0,3));
+    $raw = safe_trim($narration);
+    if ($raw === '') return '';
+
+    // 1) email
+    if (preg_match('/[a-z0-9.\-\_]+@[a-z0-9\-\.]+/i',$raw,$m)) return $m[0];
+
+    // 2) 10-digit mobile-like numbers
+    if (preg_match('/(\d{10})/',$raw,$m)) return $m[1];
+
+    // 3) masked account patterns like **4404
+    if (preg_match('/\*{2,}([0-9]{2,4})/',$raw,$m)) return 'acct_mask_'.$m[1];
+
+    // 4) common HDFC style: fields separated by hyphens. e.g. "UPI-VIDYASAGAR CHAUDHARI-977047..."
+    //    If hyphenated, prefer the second segment as the name (fall back safe).
+    $parts = preg_split('/\s*-\s*/', $raw);
+    if (count($parts) >= 2) {
+        $first = trim($parts[0]);
+        $candidate = trim($parts[1]);
+
+        // remove trailing tokens like @bank or numbers from candidate
+        $candidate = preg_replace('/\s*@.+$/','',$candidate);     // remove emails/handles
+        $candidate = preg_replace('/\s*\d.*$/','',$candidate);    // remove trailing numbers
+        $candidate = trim($candidate);
+
+        if ($candidate !== '') {
+            // return canonical lowercased / normalised for grouping
+            return normalize_narration($candidate);
+        }
+    }
+
+    // 5) fallback: use first up to 4 words of normalized narration
+    $n = normalize_narration($raw);
+    $parts2 = preg_split('/\s+/', $n);
+    return implode(' ', array_slice($parts2,0,4));
 }
 
 function run_grouping_scanner($db, $userId){
