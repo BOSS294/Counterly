@@ -1,4 +1,6 @@
 <?php
+ini_set('display_errors', '1');
+error_reporting(E_ALL);
 
 
 header('Content-Type: application/json; charset=utf-8');
@@ -53,8 +55,16 @@ $opts = [
 $context = stream_context_create($opts);
 $resp = @file_get_contents($verifyUrl, false, $context);
 if ($resp === false) {
+    $errorDetail = '';
+    if (isset($http_response_header) && is_array($http_response_header)) {
+        $errorDetail = implode(" | ", $http_response_header);
+    }
     http_response_code(502);
-    echo json_encode(['success' => false, 'error' => 'Token verification failed']);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Token verification failed',
+        'detail' => $errorDetail
+    ]);
     exit;
 }
 $tokenInfo = json_decode($resp, true);
@@ -64,7 +74,6 @@ if (!is_array($tokenInfo) || empty($tokenInfo['aud'])) {
     exit;
 }
 
-// basic validations
 if ($tokenInfo['aud'] !== $clientId) {
     http_response_code(401);
     echo json_encode(['success' => false, 'error' => 'Token audience mismatch']);
@@ -76,7 +85,6 @@ if (isset($tokenInfo['exp']) && $tokenInfo['exp'] < time()) {
     exit;
 }
 
-// extract useful fields
 $googleSub = $tokenInfo['sub'] ?? null;
 $email = $tokenInfo['email'] ?? null;
 $name = $tokenInfo['name'] ?? null;
