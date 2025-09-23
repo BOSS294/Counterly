@@ -12,7 +12,7 @@
 /* Wrapper to keep section away from page edges and centered */
 .management-wrapper {
   max-width: 1800px;
-  margin: 42px auto 8px auto; /* space from top and center */
+  margin: 52px auto 8px auto; /* space from top and center */
   padding: 0 28px; /* keep away from edges */
 }
 .management-heading {
@@ -107,7 +107,7 @@
 (function(){
   const MAX_DESC = 200;
   const cards = [
-    { key:'upload', title:'Statement Upload', icon:'bx-upload', color:'#ff9800', desc:'Upload your HDFC PDF statements here. The parser extracts dates, narrations, reference numbers, debit/credit amounts and closing balance. Files are stored immutably with provenance for safety.', href:'/app/upload.php' },
+    { key:'upload', title:'Statement Upload', icon:'bx-upload', color:'#ff9800', desc:'Upload your HDFC PDF statements here. The parser extracts dates, narrations, reference numbers, debit/credit amounts and closing balance. Files are stored immutably with provenance for safety.', href:'/upload.php' },
     { key:'statements', title:'Statement Manager', icon:'bx-file', color:'#2196f3', desc:'Browse, search and re-parse uploaded statements. View original OCR lines, correct misreads, and manage statement provenance. Re-parse when you fix a PDF read issue to refresh parsed rows.', href:'/app/statements.php' },
     { key:'counterparties', title:'Counterparty Manager', icon:'bx-group', color:'#9c27b0', desc:'Review and merge automatically detected counterparties. Add aliases, promote singleton transactions to named groups, and enrich merchants with GSTIN or website metadata for better matching.', href:'/app/counterparties.php' },
     { key:'debits', title:'Debit Management', icon:'bx-arrow-to-bottom', color:'#f44336', desc:'View, tag and export all debit transactions. Flag recurring debits, create rules to auto-classify debits, and generate reports for recurring payments or suspicious withdrawals.', href:'/app/debits.php' },
