@@ -204,12 +204,13 @@ function fileKindFromName(file){
 
 function handleFiles(list){
   for(const f of list){
-    const ext = (f.name || '').toLowerCase();
-    if(!(f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf') || f.type === 'text/plain' || f.name.toLowerCase().endsWith('.txt'))){
-      alert('Only PDF or TXT allowed: ' + f.name); continue;
-    }
+    const kind = fileKindFromName(f);
+    // If user forced a format, respect it (for hinting); but still allow main types.
+    if (statementFormat.value === 'pdf' && kind !== 'pdf') { alert('PDF format selected — only PDF files allowed: ' + f.name); continue; }
+    if (statementFormat.value === 'txt' && kind !== 'txt') { alert('TXT format selected — only .txt files allowed: ' + f.name); continue; }
+    if (kind !== 'pdf' && kind !== 'txt') { alert('Only PDF or TXT files allowed: ' + f.name); continue; }
     if(f.size > MAX_BYTES){ alert('File too large (max 20MB): ' + f.name); continue; }
-    filesQueue.push({ file: f, state: 'queued' });
+    filesQueue.push({ file: f, state: 'queued', kind: kind });
   }
   renderQueue();
 }
