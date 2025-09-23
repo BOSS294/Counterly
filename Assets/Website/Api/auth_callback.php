@@ -1,4 +1,6 @@
 <?php
+
+
 header('Content-Type: application/json; charset=utf-8');
 
 if (session_status() === PHP_SESSION_NONE) {
@@ -15,6 +17,7 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
+// read payload
 $raw = file_get_contents('php://input');
 $data = json_decode($raw, true);
 if (!is_array($data) || empty($data['id_token'])) {
@@ -36,10 +39,9 @@ if (!$clientId && is_readable($secretsPath)) {
 }
 if (!$clientId) {
     http_response_code(500);
-    echo json_encode(['success' => false, 'error' => 'Server misconfiguration']);
+    echo json_encode(['success' => false, 'error' => 'Server misconfiguration (missing GOOGLE_CLIENT_ID)']);
     exit;
 }
-
 
 $verifyUrl = 'https://oauth2.googleapis.com/tokeninfo?id_token=' . urlencode($id_token);
 $opts = [
@@ -62,6 +64,7 @@ if (!is_array($tokenInfo) || empty($tokenInfo['aud'])) {
     exit;
 }
 
+// basic validations
 if ($tokenInfo['aud'] !== $clientId) {
     http_response_code(401);
     echo json_encode(['success' => false, 'error' => 'Token audience mismatch']);
@@ -73,12 +76,12 @@ if (isset($tokenInfo['exp']) && $tokenInfo['exp'] < time()) {
     exit;
 }
 
+// extract useful fields
 $googleSub = $tokenInfo['sub'] ?? null;
 $email = $tokenInfo['email'] ?? null;
 $name = $tokenInfo['name'] ?? null;
-$picture = $tokenInfo['picture'] ?? null;
+$picture = $tokenInfo['picture'] ?? null; 
 
-// Minimal checks
 if (!$googleSub || !$email) {
     http_response_code(400);
     echo json_encode(['success' => false, 'error' => 'Incomplete token info']);
@@ -86,37 +89,80 @@ if (!$googleSub || !$email) {
 }
 
 try {
-    require_once __DIR__ . '/../../Connectors/connector.php'; // adjust path as needed
+    require_once __DIR__ . '/../../Connectors/connector.php'; 
     $db = db();
 
     $db->beginTransaction();
 
-    $user = $db->fetch("SELECT * FROM users WHERE oauth_provider = 'google' AND oauth_id = ?", [$googleSub]);
-    if (!$user) {
-        $user = $db->fetch("SELECT * FROM users WHERE email = ?", [$email]);
-    }
 
-    if ($user) {
-        $userId = (int)$user['id'];
-        $db->execute("UPDATE users SET name = ?, oauth_provider = 'google', oauth_id = ?, updated_at = NOW() WHERE id = ?", [$name, $googleSub, $userId]);
+    $existing = $db->fetch("SELECT * FROM users WHERE oauth_provider = 'google' AND oauth_id = ?", [$googleSub]);
+
+    if ($existing) {
+        $userId = (int)$existing['id'];
+        try {
+            $db->execute(
+                "UPDATE users SET name = ?, email = ?, oauth_provider = 'google', oauth_id = ?, user_avtar = ?, updated_at = NOW() WHERE id = ?",
+                [$name, $email, $googleSub, $picture, $userId]
+            );
+        } catch (\Throwable $e) {
+            $db->execute(
+                "UPDATE users SET name = ?, email = ?, oauth_provider = 'google', oauth_id = ?, updated_at = NOW() WHERE id = ?",
+                [$name, $email, $googleSub, $userId]
+            );
+        }
+        $db->logAudit('login', 'user', $userId, ['method' => 'google', 'action' => 'login'], $userId);
     } else {
-        $userId = $db->insertAndGetId("INSERT INTO users (name, email, oauth_provider, oauth_id, created_at, updated_at) VALUES (?, ?, 'google', ?, NOW(), NOW())", [$name, $email, $googleSub]);
+        $byEmail = $db->fetch("SELECT * FROM users WHERE email = ? LIMIT 1", [$email]);
+        if ($byEmail) {
+            $userId = (int)$byEmail['id'];
+            try {
+                $db->execute(
+                    "UPDATE users SET oauth_provider = 'google', oauth_id = ?, name = ?, user_avtar = ?, updated_at = NOW() WHERE id = ?",
+                    [$googleSub, $name, $picture, $userId]
+                );
+            } catch (\Throwable $e) {
+                $db->execute(
+                    "UPDATE users SET oauth_provider = 'google', oauth_id = ?, name = ?, updated_at = NOW() WHERE id = ?",
+                    [$googleSub, $name, $userId]
+                );
+            }
+            $db->logAudit('login', 'user', $userId, ['method' => 'google', 'action' => 'link_by_email'], $userId);
+        } else {
+            try {
+                $userId = $db->insertAndGetId(
+                    "INSERT INTO users (name, email, oauth_provider, oauth_id, user_avtar, created_at, updated_at) VALUES (?, ?, 'google', ?, ?, NOW(), NOW())",
+                    [$name, $email, $googleSub, $picture]
+                );
+            } catch (\Throwable $e) {
+                $userId = $db->insertAndGetId(
+                    "INSERT INTO users (name, email, oauth_provider, oauth_id, created_at, updated_at) VALUES (?, ?, 'google', ?, NOW(), NOW())",
+                    [$name, $email, $googleSub]
+                );
+            }
+            $db->logAudit('signup', 'user', $userId, ['method' => 'google', 'oauth_sub' => $googleSub], $userId);
+        }
     }
 
+    session_regenerate_id(true);
     $_SESSION['user_id'] = $userId;
     $_SESSION['user_name'] = $name;
     $_SESSION['user_email'] = $email;
+    $_SESSION['user_avatar'] = $picture;
     $_SESSION['logged_in_via'] = 'google';
-
-    // optional: log audit
-    $db->logAudit('login', 'user', $userId, ['method' => 'google'], $userId);
 
     $db->commit();
 
-    echo json_encode(['success' => true, 'user_id' => $userId]);
+
+    echo json_encode(['success' => true, 'user_id' => $userId, 'redirect' => '/app/dashboard.php']);
     exit;
-} catch (Throwable $e) {
-    if (isset($db) && method_exists($db, 'rollback')) $db->rollback();
+} catch (\Throwable $e) {
+    if (isset($db) && method_exists($db, 'rollback')) {
+        try { $db->rollback(); } catch (\Throwable $_) {}
+    }
+
+    try {
+        if (isset($db)) $db->logParse(null, 'error', 'auth_processing_failed', ['err' => $e->getMessage()]);
+    } catch (\Throwable $_) {}
     http_response_code(500);
     echo json_encode(['success' => false, 'error' => 'Server error']);
     exit;
