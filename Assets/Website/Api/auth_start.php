@@ -1,5 +1,17 @@
 <?php
-session_start();
+if (session_status() === PHP_SESSION_NONE) {
+    $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+    $cookieParams = session_get_cookie_params();
+    session_set_cookie_params([
+        'lifetime' => $cookieParams['lifetime'],
+        'path' => $cookieParams['path'],
+        'domain' => $cookieParams['domain'],
+        'secure' => $secure,
+        'httponly' => true,
+        'samesite' => 'Lax'
+    ]);
+    session_start();
+}
 
 function loadSecrets() {
     $keys = ['GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET','OAUTH_REDIRECT_URI'];
@@ -19,8 +31,8 @@ function loadSecrets() {
                 if (count($parts) === 2) {
                     $k = trim($parts[0]);
                     $v = trim($parts[1]);
-                    $v = preg_replace('/^\"|\"$|^\'|\'$/', '', $v);
-                    if (in_array($k, $keys) && !isset($out[$k])) $out[$k] = $v;
+                    $v = preg_replace('/^["\']|["\']$/', '', $v);
+                    if (!isset($out[$k])) $out[$k] = $v;
                 }
             }
         }
@@ -31,11 +43,15 @@ function loadSecrets() {
 $secrets = loadSecrets();
 $clientId = $secrets['GOOGLE_CLIENT_ID'] ?? null;
 
-$redirectUri = $secrets['OAUTH_REDIRECT_URI'] ?? ( (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'] . '/Assets/Website/Api/auth_callback.php' );
+$redirectUri = $secrets['OAUTH_REDIRECT_URI'] ?? (
+    (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http')
+    . '://' . $_SERVER['HTTP_HOST'] . '/Assets/Website/Api/auth_callback.php'
+);
 
 if (!$clientId) {
     http_response_code(500);
-    echo "Google client ID not configured.";
+    header('Content-Type: text/plain; charset=utf-8');
+    echo "ERROR: GOOGLE_CLIENT_ID not found. Check Assets/Resources/secrets.env or environment variables.\n";
     exit;
 }
 
@@ -53,5 +69,18 @@ $params = [
 ];
 
 $authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' . http_build_query($params);
+
+if (isset($_GET['debug']) && $_GET['debug'] === '1') {
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode([
+        'authUrl' => $authUrl,
+        'state' => $state,
+        'redirect_uri' => $redirectUri,
+        'client_id_present' => true,
+        'note' => 'Copy/paste authUrl into your browser to see Google errors (if any).'
+    ], JSON_PRETTY_PRINT);
+    exit;
+}
+
 header('Location: ' . $authUrl);
 exit;
