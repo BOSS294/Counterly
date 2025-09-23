@@ -375,34 +375,41 @@ function process_buffer_line($line) {
     if ($line === null) return null;
     $s = preg_replace('/\s+/', ' ', trim((string)$line));
     if (!preg_match('/^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(.*)$/', $s, $m)) return null;
-    $date_raw = $m[1];
-    $rest = trim($m[2]);
+    $date_raw = $m[1] ?? '';
+    $rest = isset($m[2]) ? trim((string)$m[2]) : '';
+
     $dateParts = preg_split('/[\/\-]/', $date_raw);
     if (count($dateParts) >= 3) {
-        $d = str_pad($dateParts[0],2,'0',STR_PAD_LEFT);
-        $mth = str_pad($dateParts[1],2,'0',STR_PAD_LEFT);
-        $y = $dateParts[2];
+        $d = str_pad($dateParts[0] ?? '',2,'0',STR_PAD_LEFT);
+        $mth = str_pad($dateParts[1] ?? '',2,'0',STR_PAD_LEFT);
+        $y = $dateParts[2] ?? '';
         if (strlen($y) === 2) $y = '20' . $y;
         $txn_date = "$y-$mth-$d";
     } else { $txn_date = null; }
 
     if (preg_match('/(.*)\s+([\d,]+(?:\.\d{1,2})?|-)\s+([\d,]+(?:\.\d{1,2})?|-)\s+([\d,]+(?:\.\d{1,2})?)$/', $rest, $mm)) {
-        $narration = trim($mm[1]); $withdraw = $mm[2]; $deposit = $mm[3]; $balance = $mm[4];
+        $narration = isset($mm[1]) ? trim((string)$mm[1]) : '';
+        $withdraw = isset($mm[2]) ? $mm[2] : null;
+        $deposit = isset($mm[3]) ? $mm[3] : null;
+        $balance = isset($mm[4]) ? $mm[4] : null;
     } else if (preg_match('/(.*)\s+([\d,]+(?:\.\d{1,2})?)\s+([\d,]+(?:\.\d{1,2})?)$/', $rest, $mm2)) {
-        $narration = trim($mm2[1]); $withdraw = $mm2[2]; $deposit = '-'; $balance = $mm2[3];
+        $narration = isset($mm2[1]) ? trim((string)$mm2[1]) : '';
+        $withdraw = isset($mm2[2]) ? $mm2[2] : null;
+        $deposit = '-';
+        $balance = isset($mm2[3]) ? $mm2[3] : null;
     } else { return null; }
 
     $reference = null;
-    if (preg_match('/(ref[:\-\s]*|chq[:.\-\s]*|utr[:\-\s]*)([A-Za-z0-9\-\/]+)$/i', $narration, $mr)) {
+    if ($narration && preg_match('/(ref[:\-\s]*|chq[:.\-\s]*|utr[:\-\s]*)([A-Za-z0-9\-\/]+)$/i', $narration, $mr)) {
         $reference = $mr[2];
-    } else if (preg_match('/[a-z0-9.\-\_]+@[a-z0-9\-\.]+/i', $narration, $mu)) {
+    } else if ($narration && preg_match('/[a-z0-9.\-\_]+@[a-z0-9\-\.]+/i', $narration, $mu)) {
         $reference = $mu[0];
     }
 
-    $withdraw_paise = ($withdraw === '-' ? null : normalize_amount_to_paise($withdraw));
-    $deposit_paise  = ($deposit === '-' ? null : normalize_amount_to_paise($deposit));
+    $withdraw_paise = ($withdraw === '-' || $withdraw === null ? null : normalize_amount_to_paise($withdraw));
+    $deposit_paise  = ($deposit === '-' || $deposit === null ? null : normalize_amount_to_paise($deposit));
     $amount_paise   = $withdraw_paise !== null ? $withdraw_paise : ($deposit_paise !== null ? $deposit_paise : 0);
-    $balance_paise  = normalize_amount_to_paise($balance);
+    $balance_paise  = $balance === null ? 0 : normalize_amount_to_paise($balance);
     $txn_type = 'other'; if ($withdraw_paise !== null) $txn_type = 'debit'; if ($deposit_paise !== null) $txn_type = 'credit';
 
     return [
