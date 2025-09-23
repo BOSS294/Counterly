@@ -1,59 +1,95 @@
 <style>
-.dash-mod { display:grid; grid-template-columns: 1fr 360px; gap:20px; align-items:start; margin-top:18px; }
-@media (max-width: 980px) { .dash-mod { grid-template-columns: 1fr; } }
+.dash-mod {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 32px;
+  align-items: start;
+  margin-top: 22px;
+  padding: 0 32px; /* Add space from page borders */
+}
+@media (max-width: 980px) { .dash-mod { grid-template-columns: 1fr; padding: 0 12px; } }
 
 .welcomer-card {
   background: var(--card-bg);
   border-radius: var(--radius-lg);
   padding: 18px;
   box-shadow: var(--shadow-deep);
-  display:flex;
-  gap:18px;
-  align-items:flex-start;
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+  margin-bottom: 18px;
 }
 
 .welcome-avatar {
-  width:88px; height:88px; border-radius:12px; overflow:hidden;
-  display:grid; place-items:center;
+  width: 98px; height: 98px; border-radius: 12px; overflow: hidden;
+  display: grid; place-items: center;
   border: 1px solid rgba(255,255,255,0.03);
   background: linear-gradient(135deg, rgba(255,255,255,0.02), rgba(0,0,0,0.02));
   transition: transform var(--transition-fast) ease, box-shadow var(--transition-fast) ease;
   box-shadow: 0 8px 28px rgba(0,0,0,0.45);
 }
-.welcome-avatar img { width:100%; height:100%; object-fit:cover; display:block; }
-
+.welcome-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .welcome-avatar:hover { transform: translateY(-6px) rotate(-1deg) scale(1.02); box-shadow: 0 30px 80px rgba(0,0,0,0.65); }
 
-.welcome-meta { flex:1; display:flex; flex-direction:column; gap:6px; }
-.welcome-title { font-weight:900; font-size:18px; color:var(--text); display:flex; gap:10px; align-items:center; }
-.welcome-sub { color:var(--muted); font-size:13px; }
+.welcome-meta { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.welcome-title {
+  font-weight: 900; font-size: 18px; color: var(--text); display: flex; gap: 10px; align-items: center;
+}
+.welcome-back {
+  color: #6C63FF; /* Indigo */
+  font-weight: 900;
+}
+.welcome-name {
+  color: #FF9800; /* Orange */
+  font-weight: 900;
+}
+.welcome-sub { color: var(--muted); font-size: 13px; }
 
-.role-pill { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:999px; background: rgba(255,255,255,0.02); color:var(--muted); font-weight:700; font-size:13px; border:1px solid rgba(255,255,255,0.03); }
+.role-pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,0.02); color: var(--muted); font-weight: 700; font-size: 13px; border: 1px solid rgba(255,255,255,0.03); }
 
-.kpis-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap:12px; margin-top:12px; }
+.kpis-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
 .kpi-pill {
   background: linear-gradient(180deg, rgba(255,255,255,0.01), rgba(0,0,0,0.02));
   border-radius: 12px;
   padding: 12px;
-  display:flex; flex-direction:column; gap:6px;
+  display: flex; flex-direction: row; gap: 10px; align-items: center;
   border: 1px solid rgba(255,255,255,0.03);
   transition: transform var(--transition-fast) ease, box-shadow var(--transition-fast) ease, border-color var(--transition-fast) ease;
 }
 .kpi-pill:hover { transform: translateY(-6px); box-shadow: 0 28px 60px rgba(0,0,0,0.6); border-color: rgba(255,169,77,0.12); }
-.kpi-value { font-weight:900; color:var(--text); font-size:16px; }
-.kpi-label { color:var(--muted); font-size:13px; }
+.kpi-icon { font-size: 22px; display: flex; align-items: center; justify-content: center; width: 28px; }
+.kpi-value { font-weight: 900; font-size: 16px; }
+.kpi-label { font-size: 13px; font-weight: 700; }
+
+.kpi-statements .kpi-value, .kpi-statements .kpi-label { color: #2196F3; } /* Blue */
+.kpi-transactions .kpi-value, .kpi-transactions .kpi-label { color: #4CAF50; } /* Green */
+.kpi-counterparties .kpi-value, .kpi-counterparties .kpi-label { color: #9C27B0; } /* Purple */
+.kpi-debit .kpi-value, .kpi-debit .kpi-label { color: #F44336; } /* Red */
+.kpi-credit .kpi-value, .kpi-credit .kpi-label { color: #FF9800; } /* Orange */
+.kpi-balance .kpi-value, .kpi-balance .kpi-label { color: #009688; } /* Teal */
+
 .quick-chart-card {
   background: var(--card-bg);
   border-radius: var(--radius-md);
   padding: 12px;
   box-shadow: var(--shadow-deep);
   border: 1px solid rgba(255,255,255,0.03);
-  display:flex; flex-direction:column; gap:8px;
-  min-height:220px;
+  display: flex; flex-direction: column; gap: 8px;
+  min-height: 220px;
+  margin-bottom: 18px;
 }
-.empty-state { color:var(--muted); padding:18px; text-align:center; border-radius:10px; background: rgba(255,255,255,0.01); }
-.kpi-loading { height:18px; width:120px; background: linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.04)); border-radius:8px; }
+
+.empty-state { color: var(--muted); padding: 18px; text-align: center; border-radius: 10px; background: rgba(255,255,255,0.01); }
+.kpi-loading { height: 18px; width: 120px; background: linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.04)); border-radius: 8px; }
 </style>
+
+<!-- Boxicons CDN for icons -->
+<link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet">
 
 <div class="dash-mod">
   <div>
@@ -65,7 +101,11 @@
       <div class="welcome-meta">
         <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
           <div>
-            <div class="welcome-title" id="welcomeTitle">Welcome back, <span id="welcomeName">User</span> <span style="font-size:18px;">👋</span></div>
+            <div class="welcome-title" id="welcomeTitle">
+              <span class="welcome-back">Welcome Back,</span>
+              <span class="welcome-name" id="welcomeName">User</span>
+              <span style="font-size:18px;">👋</span>
+            </div>
             <div class="welcome-sub" id="welcomeRole">Role — Member</div>
           </div>
 
@@ -77,12 +117,48 @@
         </div>
 
         <div class="kpis-grid" id="kpisGrid">
-          <div class="kpi-pill"><div class="kpi-value">—</div><div class="kpi-label">Statements</div></div>
-          <div class="kpi-pill"><div class="kpi-value">—</div><div class="kpi-label">Transactions</div></div>
-          <div class="kpi-pill"><div class="kpi-value">—</div><div class="kpi-label">Counterparties</div></div>
-          <div class="kpi-pill"><div class="kpi-value">—</div><div class="kpi-label">Total Debit (₹)</div></div>
-          <div class="kpi-pill"><div class="kpi-value">—</div><div class="kpi-label">Total Credit (₹)</div></div>
-          <div class="kpi-pill"><div class="kpi-value">—</div><div class="kpi-label">Latest Balance (₹)</div></div>
+          <div class="kpi-pill kpi-statements">
+            <span class="kpi-icon"><i class='bx bx-file'></i></span>
+            <div>
+              <div class="kpi-value">—</div>
+              <div class="kpi-label">Statements</div>
+            </div>
+          </div>
+          <div class="kpi-pill kpi-transactions">
+            <span class="kpi-icon"><i class='bx bx-transfer'></i></span>
+            <div>
+              <div class="kpi-value">—</div>
+              <div class="kpi-label">Transactions</div>
+            </div>
+          </div>
+          <div class="kpi-pill kpi-counterparties">
+            <span class="kpi-icon"><i class='bx bx-group'></i></span>
+            <div>
+              <div class="kpi-value">—</div>
+              <div class="kpi-label">Counterparties</div>
+            </div>
+          </div>
+          <div class="kpi-pill kpi-debit">
+            <span class="kpi-icon"><i class='bx bx-arrow-to-bottom'></i></span>
+            <div>
+              <div class="kpi-value">—</div>
+              <div class="kpi-label">Total Debit (₹)</div>
+            </div>
+          </div>
+          <div class="kpi-pill kpi-credit">
+            <span class="kpi-icon"><i class='bx bx-arrow-to-top'></i></span>
+            <div>
+              <div class="kpi-value">—</div>
+              <div class="kpi-label">Total Credit (₹)</div>
+            </div>
+          </div>
+          <div class="kpi-pill kpi-balance">
+            <span class="kpi-icon"><i class='bx bx-wallet'></i></span>
+            <div>
+              <div class="kpi-value">—</div>
+              <div class="kpi-label">Latest Balance (₹)</div>
+            </div>
+          </div>
         </div>
 
         <div id="noDataMsg" class="empty-state" style="display:none; margin-top:12px;">
@@ -96,7 +172,6 @@
       <div id="topCpList" style="display:grid; gap:8px;"></div>
     </div>
   </div>
-
 
   <div class="quick-chart-card">
     <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -173,10 +248,11 @@ async function loadDashboard() {
     if (data.top_counterparties && data.top_counterparties.length > 0) {
       data.top_counterparties.forEach(cp => {
         const div = document.createElement('div');
-        div.className = 'kpi-pill';
+        div.className = 'kpi-pill kpi-counterparties';
         div.style.display = 'flex';
         div.style.justifyContent = 'space-between';
-        div.innerHTML = `<div style="font-weight:800">${escapeHtml(cp.canonical_name)}</div>
+        div.innerHTML = `<span class="kpi-icon"><i class='bx bx-group'></i></span>
+                         <div style="font-weight:800">${escapeHtml(cp.canonical_name)}</div>
                          <div style="text-align:right; color:var(--muted)">${(cp.tx_count ?? 0)} tx</div>`;
         cpList.appendChild(div);
       });
