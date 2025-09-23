@@ -24,14 +24,14 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
 ?>
 <head>
   <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="/Assets/Resources/base.css">
+  <link rel="stylesheet" href="https://coderresources.icu/Assets/Resources/base.css">
 </head>
 
 <nav class="site-header nav-fullwidth" role="navigation" aria-label="User top navigation">
   <div class="container nav-row">
     <div class="nav-left" style="min-width:220px;">
       <div class="nav-title" aria-hidden="false">
-        <div class="title-main">VERSION <small class="version">V1</small></div>
+        <div class="title-main">CounterLy <small class="version">V1</small></div>
         <div class="title-sub small-muted">Concise dashboard • grouped insights</div>
       </div>
     </div>
