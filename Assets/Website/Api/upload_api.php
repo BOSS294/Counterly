@@ -1,6 +1,7 @@
 <?php
 // upload_api.php
 // Robust API for uploading PDF or extracted-text, parsing and inserting transactions.
+// This version DOES NOT perform server-side PDF->text extraction (no pdftotext/gs).
 // Replace your existing file with this. Keep CONNECTOR_PATH correct for your environment.
 
 declare(strict_types=1);
@@ -57,7 +58,6 @@ try {
         default: jsonResp(400, ['success'=>false, 'error'=>'Unknown action']);
     }
 } catch (Throwable $e) {
-    // Log global fallback
     try { $db->logParse(null, 'error', 'api_unhandled_exception', ['action'=>$action,'err'=>$e->getMessage()], $_SESSION['user_id'] ?? null); } catch (Throwable $_) {}
     if (DEBUG) {
         jsonResp(500, ['success'=>false, 'error'=>'Server error', 'dbg'=>$e->getMessage()]);
@@ -72,7 +72,7 @@ function require_auth($db): int {
 }
 function validate_csrf($token): bool {
     if (empty($_SESSION['csrf_token']) || !$token) return false;
-    return hash_equals($_SESSION['csrf_token'], (string)$token);
+    return hash_equals($_SESSION['csrf_token'], (string)($token));
 }
 
 // ---------------- API implementations ----------------
@@ -91,13 +91,17 @@ function api_upload($db) {
 
     $finfo = new finfo(FILEINFO_MIME_TYPE);
     $mime = $finfo->file($f['tmp_name']) ?: '';
-    if ($mime !== 'application/pdf' && substr(strtolower($f['name']), -4) !== '.pdf') {
+    $nameLower = strtolower($f['name'] ?? '');
+    $ext = pathinfo($f['name'] ?? '', PATHINFO_EXTENSION);
+
+    // Accept PDF or TXT but do NOT perform server-side PDF->text extraction.
+    if ($mime !== 'application/pdf' && $ext !== 'pdf' && $mime !== 'text/plain' && $ext !== 'txt') {
         jsonResp(400, ['success'=>false, 'error'=>'Invalid file type']);
     }
 
     $account_id = isset($_POST['account_id']) ? intval($_POST['account_id']) : null;
 
-    // store file
+    // store file (either PDFs or txt)
     $uploaddir = __DIR__ . '/../../Uploads';
     if (!is_dir($uploaddir) && !mkdir($uploaddir, 0700, true)) jsonResp(500, ['success'=>false, 'error'=>'Server storage error']);
     $userdir = $uploaddir . '/statements/' . intval($userId);
@@ -123,7 +127,7 @@ function api_upload($db) {
         try { $db->writeLocalLog('warning','duplicate_check_failed',['err'=>$e->getMessage()]); } catch (Throwable $_) {}
     }
 
-    // insert statement
+    // insert statement record
     try {
         $stmtId = $db->insertAndGetId(
             "INSERT INTO statements (user_id, account_id, filename, storage_path, file_size, file_sha256, parse_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'uploaded', NOW(), NOW())",
@@ -140,18 +144,22 @@ function api_upload($db) {
     $compress = ($_POST['compress'] ?? '') === '1';
     if ($compress) $db->logParse($stmtId,'info','requested_compress',['compress'=>true], $userId);
 
-    // parse (synchronous for demo). If prefer background worker, queue instead and return statement_id.
-    try {
-        parse_and_insert($db, $stmtId, $userId, $stored);
-    } catch (Throwable $e) {
-        $errMsg = substr($e->getMessage(), 0, 1000);
-        try { $db->execute("UPDATE statements SET parse_status = 'error', error_message = ?, updated_at = NOW() WHERE id = ?", [$errMsg, $stmtId]); } catch (Throwable $_) {}
-        $db->logParse($stmtId,'error','parse_failed',['err'=>$errMsg], $userId);
-        // return id to allow UI polling for details
-        jsonResp(200, ['success'=>true,'statement_id'=>$stmtId,'parse_status'=>'error','error'=>$errMsg]);
+    // If a TXT file was uploaded, parse it now.
+    if (strtolower($ext) === 'txt' || $mime === 'text/plain') {
+        try {
+            parse_and_insert($db, $stmtId, $userId, $stored);
+        } catch (Throwable $e) {
+            $errMsg = substr($e->getMessage(), 0, 1000);
+            try { $db->execute("UPDATE statements SET parse_status = 'error', error_message = ?, updated_at = NOW() WHERE id = ?", [$errMsg, $stmtId]); } catch (Throwable $_) {}
+            $db->logParse($stmtId,'error','parse_failed',['err'=>$errMsg], $userId);
+            jsonResp(200, ['success'=>true,'statement_id'=>$stmtId,'parse_status'=>'error','error'=>$errMsg]);
+        }
+        jsonResp(200, ['success'=>true,'statement_id'=>$stmtId]);
     }
 
-    jsonResp(200, ['success'=>true,'statement_id'=>$stmtId]);
+    // For PDFs: we intentionally DO NOT attempt server-side PDF->text extraction.
+    // Client should extract and POST extracted text to action=upload_text (optionally sending statement_id).
+    jsonResp(200, ['success'=>true,'statement_id'=>$stmtId,'note'=>'pdf_stored_no_parse','parse_status'=>'uploaded']);
 }
 
 function api_upload_text($db) {
@@ -161,8 +169,11 @@ function api_upload_text($db) {
     $pdfText = $_POST['pdf_text'] ?? '';
     $filename = $_POST['filename'] ?? 'uploaded.txt';
     $account_id = isset($_POST['account_id']) ? intval($_POST['account_id']) : null;
+    $referStmtId = isset($_POST['statement_id']) ? intval($_POST['statement_id']) : null;
+
     if (safe_trim($pdfText) === '') jsonResp(400, ['success'=>false,'error'=>'No PDF text provided']);
 
+    // store text file
     $uploaddir = __DIR__ . '/../../Uploads/texts/' . intval($userId);
     if (!is_dir($uploaddir) && !mkdir($uploaddir, 0700, true)) jsonResp(500, ['success'=>false,'error'=>'Server storage error']);
     $timestamp = gmdate('Ymd_His');
@@ -171,13 +182,30 @@ function api_upload_text($db) {
     file_put_contents($stored, (string)$pdfText);
 
     try {
-        $stmtId = $db->insertAndGetId(
-            "INSERT INTO statements (user_id, account_id, filename, storage_path, file_size, file_sha256, parse_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'uploaded', NOW(), NOW())",
-            [ $userId, $account_id, $filename, $stored, strlen((string)$pdfText), hash('sha256', (string)$pdfText) ]
-        );
-        $db->logAudit('upload_statement_text','statement',$stmtId,['filename'=>$filename,'account_id'=>$account_id], $userId);
+        if ($referStmtId) {
+            // attach to existing statement if it belongs to the user
+            $row = $db->fetch('SELECT id FROM statements WHERE id = ? AND user_id = ? LIMIT 1', [$referStmtId, $userId]);
+            if ($row) {
+                // update storage_path, sha, size, filename, and reset parse_status to uploaded so parse_and_insert will run
+                $db->execute('UPDATE statements SET filename = ?, storage_path = ?, file_size = ?, file_sha256 = ?, parse_status = ?, updated_at = NOW() WHERE id = ?', [$filename, $stored, strlen((string)$pdfText), hash('sha256', (string)$pdfText), 'uploaded', $referStmtId]);
+                $stmtId = $referStmtId;
+            } else {
+                // fallback to creating a new statement
+                $stmtId = $db->insertAndGetId(
+                    "INSERT INTO statements (user_id, account_id, filename, storage_path, file_size, file_sha256, parse_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'uploaded', NOW(), NOW())",
+                    [ $userId, $account_id, $filename, $stored, strlen((string)$pdfText), hash('sha256', (string)$pdfText) ]
+                );
+            }
+        } else {
+            $stmtId = $db->insertAndGetId(
+                "INSERT INTO statements (user_id, account_id, filename, storage_path, file_size, file_sha256, parse_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'uploaded', NOW(), NOW())",
+                [ $userId, $account_id, $filename, $stored, strlen((string)$pdfText), hash('sha256', (string)$pdfText) ]
+            );
+        }
 
-        // parse (synchronous)
+        $db->logAudit('upload_statement_text','statement',$stmtId,['filename'=>$filename,'account_id'=>$account_id,'attached_to'=>$referStmtId], $userId);
+
+        // parse the stored text (synchronous)
         parse_and_insert($db, $stmtId, $userId, $stored);
         jsonResp(200, ['success'=>true,'statement_id'=>$stmtId]);
     } catch (Throwable $e) {
@@ -191,10 +219,10 @@ function api_upload_text($db) {
 function api_status($db) {
     $userId = require_auth($db);
     $sid = intval($_GET['sid'] ?? 0);
-    if (!$sid) jsonResp(400, ['success'=>false,'error'=>'Missing sid']);
+    if (!$sid) jsonResp(400, ['success'=>false, 'error'=>'Missing sid']);
     try {
         $row = $db->fetch('SELECT id, parse_status, parsed_at, error_message, tx_count FROM statements WHERE id = ? AND user_id = ? LIMIT 1', [$sid, $userId]);
-        if (!$row) jsonResp(404, ['success'=>false,'error'=>'Not found']);
+        if (!$row) jsonResp(404, ['success'=>false, 'error'=>'Not found']);
         $logs = $db->fetchAll('SELECT level, message, meta, created_at FROM parse_logs WHERE statement_id = ? ORDER BY id DESC LIMIT 50', [$sid]);
         jsonResp(200, ['success'=>true,'parse_status'=>$row['parse_status'],'parsed_at'=>$row['parsed_at'],'error_message'=>$row['error_message'],'tx_count'=>$row['tx_count'],'logs'=>$logs]);
     } catch (Throwable $e) {
@@ -202,6 +230,8 @@ function api_status($db) {
         jsonResp(500, ['success'=>false,'error'=>'Server error']);
     }
 }
+
+// --- (accounts, counterparties, promote, merge_alias, and parsing helpers remain unchanged) ---
 
 // ----- accounts -----
 function api_add_account($db) {
@@ -324,26 +354,8 @@ function compute_txn_checksum($account_id, $txn_date, $amount_paise, $reference,
     return hash('sha256', $canon);
 }
 
-function extract_text_from_pdf($path): string {
-    // Always return string or throw exception
-    $pdftotext = safe_trim(@shell_exec('which pdftotext 2>/dev/null'));
-    if ($pdftotext !== '') {
-        $cmd = escapeshellcmd($pdftotext) . ' -layout ' . escapeshellarg($path) . ' -';
-        $out = @shell_exec($cmd);
-        if (is_string($out) && $out !== '') return (string)$out;
-    }
-    $gs = safe_trim(@shell_exec('which gs 2>/dev/null'));
-    if ($gs !== '') {
-        $tmp = tempnam(sys_get_temp_dir(), 'pdf-txt-');
-        $cmd = escapeshellcmd($gs) . ' -q -dNODISPLAY -sOutputFile=' . escapeshellarg($tmp) . ' -sDEVICE=txtwrite -dBATCH ' . escapeshellarg($path) . ' 2>&1';
-        @shell_exec($cmd);
-        $txt = @file_get_contents($tmp);
-        @unlink($tmp);
-        if (is_string($txt) && $txt !== '') return (string)$txt;
-    }
-    throw new RuntimeException('No PDF text extractor available on server. Install pdftotext (poppler) or provide an alternative.');
-}
-
+// Note: We intentionally removed/disabled server-side PDF->text extraction (no pdftotext/gs usage).
+// parse_hdfc_text_to_txns and process_buffer_line are unchanged and assume a textual HDFC statement.
 function parse_hdfc_text_to_txns($rawText){
     $lines = preg_split('/\r?\n/', safe_string($rawText));
     $txns = []; $buffer = null;
@@ -428,20 +440,23 @@ function parse_and_insert($db, $stmtId, $userId, $storedPath){
         $db->execute('UPDATE statements SET parse_status = ?, updated_at = NOW() WHERE id = ?', ['parsing', $stmtId]);
     } catch (Throwable $_) {}
 
-    // read text (text upload or pdf extraction)
+    // read text (only text files should be parsed)
     $text = '';
     try {
-        if (is_readable($storedPath) && strtolower(pathinfo($storedPath, PATHINFO_EXTENSION)) === 'txt') {
-            $text = (string)file_get_contents($storedPath);
-        } else {
-            $text = extract_text_from_pdf($storedPath);
+        $ext = strtolower(pathinfo($storedPath, PATHINFO_EXTENSION));
+        if ($ext !== 'txt') {
+            // Defensive: only parse textual uploads; PDFs must have text uploaded separately.
+            $err = 'Server configured to not perform PDF->text extraction. Provide a .txt statement or upload extracted text via upload_text.';
+            try { $db->execute("UPDATE statements SET parse_status = 'needs_text', error_message = ?, updated_at = NOW() WHERE id = ?", [$err, $stmtId]); } catch (Throwable $_) {}
+            $db->logParse($stmtId, 'warning', 'parse_skipped_non_text', ['err'=>$err], $userId);
+            throw new RuntimeException($err);
         }
+        $text = (string)file_get_contents($storedPath);
     } catch (Throwable $e) {
-        // extractor failure: mark statement error and return so UI can show details
         $err = substr($e->getMessage(), 0, 1000);
         try { $db->execute("UPDATE statements SET parse_status = 'error', error_message = ?, updated_at = NOW() WHERE id = ?", [$err, $stmtId]); } catch (Throwable $_) {}
         $db->logParse($stmtId, 'error', 'extract_failed', ['err'=>$err], $userId);
-        throw $e; // bubble up so caller can include statement id in response
+        throw $e;
     }
 
     $txns = parse_hdfc_text_to_txns($text);

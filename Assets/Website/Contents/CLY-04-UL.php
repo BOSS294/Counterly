@@ -64,12 +64,12 @@ body{margin:0;font-family:Inter,system-ui,Arial;background:var(--bg);color:var(-
   <div class="grid">
     <div class="card instructions">
       <h3>How it works</h3>
-      <p class="small">This UI will try to extract text using <strong>pdf.js</strong> inside your browser and send the extracted text to the server for parsing (best when server lacks `pdftotext`). If extraction fails, the file is uploaded as a PDF and parsed server-side (requires poppler).</p>
+      <p class="small">This UI can extract text in the browser via <strong>pdf.js</strong> and send the extracted text to the server for parsing. If you upload a PDF without sending extracted text, the server will only store the PDF (no server-side PDF→text extraction is performed).</p>
       <p class="small"><strong>Privacy:</strong> extracted text and files are sent only to your account; files are stored with SHA256 checksums to avoid duplicate parsing.</p>
       <div style="margin-top:12px">
         <strong>Tips</strong>
         <ul class="small">
-          <li>Use HDFC PDF statements (layout expected from sample).</li>
+          <li>HDFC provides `.txt` statements — uploading the `.txt` directly is the most reliable.</li>
           <li>Max 20 MB per file.</li>
         </ul>
       </div>
@@ -78,13 +78,22 @@ body{margin:0;font-family:Inter,system-ui,Arial;background:var(--bg);color:var(-
     <div class="card">
       <div id="dropzone" class="dropzone" tabindex="0">
         <div style="font-size:34px;opacity:0.9">📄</div>
-        <div id="dropText">Drag & drop PDF files here or click to browse</div>
-        <div class="small">Multiple files allowed — parsed one-by-one.</div>
+        <div id="dropText">Drag & drop PDF or TXT files here or click to browse</div>
+        <div class="small">Multiple files allowed — processed one-by-one.</div>
       </div>
 
       <div class="controls">
         <label class="small"><input type="checkbox" id="useClientExtract" checked> Extract text in browser (pdf.js)</label>
         <label class="small"><input type="checkbox" id="compressPdf"> Compress on server</label>
+
+        <label style="margin-left:8px" class="small">Format:
+          <select id="statementFormat" class="select small">
+            <option value="auto">Auto (detect by extension)</option>
+            <option value="pdf">PDF</option>
+            <option value="txt">TXT</option>
+          </select>
+        </label>
+
         <div style="flex:1"></div>
         <select id="accountSelect" class="select small"><option>Loading accounts…</option></select>
         <button id="startUpload" class="btn btn-primary">Start</button>
@@ -134,12 +143,14 @@ const MAX_BYTES = 20 * 1024 * 1024;
 
 /* DOM */
 const dropzone = document.getElementById('dropzone');
+const dropText = document.getElementById('dropText');
 const fileListEl = document.getElementById('fileList');
 const startBtn = document.getElementById('startUpload');
 const clearBtn = document.getElementById('clearFiles');
 const stepsLog = document.getElementById('stepsLog');
 const compressCheckbox = document.getElementById('compressPdf');
 const useClientExtract = document.getElementById('useClientExtract');
+const statementFormat = document.getElementById('statementFormat');
 const accountSelect = document.getElementById('accountSelect');
 const addAccountBtn = document.getElementById('addAccountBtn');
 const modal = document.getElementById('modal');
@@ -155,7 +166,6 @@ let filesQueue = [];
 
 /* pdf.js worker - ensure worker path matches version */
 if (window['pdfjsLib']) {
-  // set workerSrc to the same CDN version used for pdf.min.js
   window['pdfjsLib'].GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js';
 }
 
@@ -172,7 +182,7 @@ function renderQueue(){
       <div style="display:flex; gap:12px; align-items:center; min-width:0;">
         <div style="min-width:0;">
           <div style="font-weight:800;">${escapeHtml(fObj.file.name)}</div>
-          <div style="color:var(--muted); font-size:13px;">${(fObj.file.size/1024/1024).toFixed(2)} MB</div>
+          <div style="color:var(--muted); font-size:13px;">${(fObj.file.size/1024/1024).toFixed(2)} MB • ${fObj.kind}</div>
         </div>
       </div>
       <div style="display:flex; gap:12px; align-items:center;">
@@ -184,20 +194,32 @@ function renderQueue(){
   });
 }
 
-/* File handling */
+/* File handling - accept both PDF and TXT by default; behavior influenced by statementFormat */
+function fileKindFromName(file){
+  const name = (file.name || '').toLowerCase();
+  if (name.endsWith('.txt') || file.type === 'text/plain') return 'txt';
+  if (name.endsWith('.pdf') || file.type === 'application/pdf') return 'pdf';
+  return 'other';
+}
+
 function handleFiles(list){
   for(const f of list){
-    if(f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')){ alert('Only PDF files allowed: ' + f.name); continue; }
+    const kind = fileKindFromName(f);
+    // If user forced a format, respect it (for hinting); but still allow main types.
+    if (statementFormat.value === 'pdf' && kind !== 'pdf') { alert('PDF format selected — only PDF files allowed: ' + f.name); continue; }
+    if (statementFormat.value === 'txt' && kind !== 'txt') { alert('TXT format selected — only .txt files allowed: ' + f.name); continue; }
+    if (kind !== 'pdf' && kind !== 'txt') { alert('Only PDF or TXT files allowed: ' + f.name); continue; }
     if(f.size > MAX_BYTES){ alert('File too large (max 20MB): ' + f.name); continue; }
-    filesQueue.push({ file: f, state: 'queued' });
+    filesQueue.push({ file: f, state: 'queued', kind: kind });
   }
   renderQueue();
 }
 
+/* drag/drop UI */
 ['dragenter','dragover'].forEach(evt=> dropzone.addEventListener(evt, (e)=>{ e.preventDefault(); dropzone.classList.add('dragover'); }));
 ['dragleave','drop'].forEach(evt=> dropzone.addEventListener(evt, (e)=>{ e.preventDefault(); dropzone.classList.remove('dragover'); }));
 dropzone.addEventListener('drop', (e)=>{ handleFiles(e.dataTransfer.files); });
-dropzone.addEventListener('click', ()=>{ const ip = document.createElement('input'); ip.type='file'; ip.accept='.pdf,application/pdf'; ip.multiple=true; ip.onchange = ()=> handleFiles(ip.files); ip.click(); });
+dropzone.addEventListener('click', ()=>{ const ip = document.createElement('input'); ip.type='file'; ip.accept='.pdf,.txt,application/pdf,text/plain'; ip.multiple=true; ip.onchange = ()=> handleFiles(ip.files); ip.click(); });
 dropzone.addEventListener('keydown', (e)=>{ if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); dropzone.click(); } });
 
 clearBtn.addEventListener('click', ()=>{ filesQueue = []; renderQueue(); setSteps('Cleared.'); });
@@ -209,10 +231,9 @@ startBtn.addEventListener('click', async ()=> {
   const accountId = accountSelect.value ? parseInt(accountSelect.value) : null;
   for(let i=0;i<filesQueue.length;i++){
     const item = filesQueue[i];
-    // status element might not exist if UI re-rendered; ensure it does
     const stEl = document.getElementById('status'+i);
     if(stEl) stEl.textContent = 'Processing...';
-    await processFile(item.file, i, accountId);
+    await processFile(item.file, i, accountId, item.kind);
   }
   setSteps('All uploads finished. Check Statements page.');
   startBtn.disabled = false; clearBtn.disabled = false;
@@ -230,84 +251,116 @@ async function extractPdfText(file){
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    // join tokens preserving spaces
     text += content.items.map(item => item.str).join(' ') + '\n';
   }
   return text;
 }
 
-/* processFile: try client extraction -> upload_text, else fallback to binary upload */
-async function processFile(file, idx, accountId){
+/* processFile: txt files are uploaded to upload_text; pdf files are extracted client-side if enabled or uploaded as binary otherwise */
+async function processFile(file, idx, accountId, kind){
   const statusEl = document.getElementById('status'+idx);
   const progEl = document.querySelector('#prog'+idx+' i');
   try {
-    if (useClientExtract.checked) {
-      statusEl.textContent = 'Extracting text (browser)...';
-      let pdfText = '';
-      try {
-        pdfText = await extractPdfText(file);
-      } catch(e) {
-        console.warn('Client extraction failed:', e);
-      }
-      if (pdfText && pdfText.trim().length > 30) {
-        // send text to upload_text endpoint
-        statusEl.textContent = 'Uploading extracted text...';
-        progEl.style.width = '20%';
-        const fd = new FormData();
-        fd.append('pdf_text', pdfText);
-        fd.append('filename', file.name);
-        fd.append('csrf_token', CSRF);
-        if (accountId) fd.append('account_id', accountId);
-        if (compressCheckbox.checked) fd.append('compress', '1');
-        const res = await fetch(API_URL + '?action=upload_text', { method: 'POST', credentials: 'include', body: fd });
-        const j = await res.json();
-        if (j.success) {
-          progEl.style.width = '100%';
-          statusEl.textContent = 'Uploaded (text) — Parsing';
-          await pollParseStatus(j.statement_id, idx);
-          return;
-        } else {
-          statusEl.textContent = 'Server error: ' + (j.error||'unknown');
-          return;
-        }
+    // TXT file -> upload as text (server will parse)
+    if (kind === 'txt') {
+      statusEl.textContent = 'Reading .txt file...';
+      const txt = await file.text();
+      if (!txt || txt.trim().length < 10) { statusEl.textContent = 'Empty text file'; return; }
+      statusEl.textContent = 'Uploading text...';
+      progEl.style.width = '20%';
+      const fd = new FormData();
+      fd.append('pdf_text', txt);
+      fd.append('filename', file.name);
+      fd.append('csrf_token', CSRF);
+      if (accountId) fd.append('account_id', accountId);
+      if (compressCheckbox.checked) fd.append('compress', '1');
+      const res = await fetch(API_URL + '?action=upload_text', { method: 'POST', credentials: 'include', body: fd });
+      const j = await res.json();
+      if (j.success) {
+        progEl.style.width = '100%';
+        statusEl.textContent = 'Uploaded (text) — Parsing';
+        await pollParseStatus(j.statement_id, idx);
       } else {
-        // no text extracted -> fallback to direct upload
-        statusEl.textContent = 'No text extracted, falling back to PDF upload';
+        statusEl.textContent = 'Server error: ' + (j.error||'unknown');
       }
+      return;
     }
 
-    // fallback binary upload
-    statusEl.textContent = 'Uploading PDF...';
-    progEl.style.width = '5%';
-    const fd2 = new FormData();
-    fd2.append('statement_pdf', file);
-    fd2.append('csrf_token', CSRF);
-    if (accountId) fd2.append('account_id', accountId);
-    if (compressCheckbox.checked) fd2.append('compress', '1');
-
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', API_URL + '?action=upload', true);
-    xhr.withCredentials = true;
-    xhr.upload.onprogress = function(e){ if(e.lengthComputable){ const pct = Math.round((e.loaded / e.total) * 100); progEl.style.width = pct + '%'; statusEl.textContent = 'Uploading ' + pct + '%'; } };
-    await new Promise((resolve) => {
-      xhr.onload = async function(){
-        let j = null;
-        try { j = JSON.parse(xhr.responseText); } catch(e){ /* ignore */ }
-        if (xhr.status >=200 && xhr.status < 300 && j && j.success) {
-          statusEl.textContent = 'Uploaded — Parsing';
-          progEl.style.width = '100%';
-          await pollParseStatus(j.statement_id, idx);
-        } else {
-          statusEl.textContent = 'Upload failed: ' + (j && j.error ? j.error : xhr.status);
+    // PDF file -> try client extraction if enabled
+    if (kind === 'pdf') {
+      if (useClientExtract.checked) {
+        statusEl.textContent = 'Extracting text (browser)...';
+        let pdfText = '';
+        try {
+          pdfText = await extractPdfText(file);
+        } catch(e) {
+          console.warn('Client extraction failed:', e);
         }
-        resolve();
-      };
-      xhr.onerror = function(){ statusEl.textContent = 'Network error'; resolve(); };
-      xhr.send(fd2);
-    });
+        if (pdfText && pdfText.trim().length > 30) {
+          // Send extracted text to upload_text; allow server to attach to a previously-uploaded PDF by statement_id if desired
+          statusEl.textContent = 'Uploading extracted text...';
+          progEl.style.width = '20%';
+          const fd = new FormData();
+          fd.append('pdf_text', pdfText);
+          fd.append('filename', file.name);
+          fd.append('csrf_token', CSRF);
+          if (accountId) fd.append('account_id', accountId);
+          if (compressCheckbox.checked) fd.append('compress', '1');
+          const res = await fetch(API_URL + '?action=upload_text', { method: 'POST', credentials: 'include', body: fd });
+          const j = await res.json();
+          if (j.success) {
+            progEl.style.width = '100%';
+            statusEl.textContent = 'Uploaded (text) — Parsing';
+            await pollParseStatus(j.statement_id, idx);
+            return;
+          } else {
+            statusEl.textContent = 'Server error: ' + (j.error||'unknown');
+            return;
+          }
+        } else {
+          statusEl.textContent = 'No text extracted, falling back to PDF upload';
+        }
+      }
 
+      // fallback: upload PDF binary to server (server will store but will NOT extract text automatically)
+      statusEl.textContent = 'Uploading PDF (will be stored, no server extraction)...';
+      progEl.style.width = '5%';
+      const fd2 = new FormData();
+      fd2.append('statement_pdf', file);
+      fd2.append('csrf_token', CSRF);
+      if (accountId) fd2.append('account_id', accountId);
+      if (compressCheckbox.checked) fd2.append('compress', '1');
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', API_URL + '?action=upload', true);
+      xhr.withCredentials = true;
+      xhr.upload.onprogress = function(e){ if(e.lengthComputable){ const pct = Math.round((e.loaded / e.total) * 100); progEl.style.width = pct + '%'; statusEl.textContent = 'Uploading ' + pct + '%'; } };
+      await new Promise((resolve) => {
+        xhr.onload = async function(){
+          let j = null;
+          try { j = JSON.parse(xhr.responseText); } catch(e){ /* ignore */ }
+          if (xhr.status >=200 && xhr.status < 300 && j && j.success) {
+            statusEl.textContent = 'Uploaded — Stored (no server-side PDF→text extraction).';
+            progEl.style.width = '100%';
+            // If server returned parse_status let's show it; otherwise the client can extract and upload_text referencing statement_id in a follow-up step
+            if (j.parse_status) statusEl.textContent += ' Status: ' + j.parse_status;
+            // NOTE: client can now extract text and call upload_text with statement_id to attach the text and trigger parsing.
+          } else {
+            statusEl.textContent = 'Upload failed: ' + (j && j.error ? j.error : xhr.status);
+          }
+          resolve();
+        };
+        xhr.onerror = function(){ statusEl.textContent = 'Network error'; resolve(); };
+        xhr.send(fd2);
+      });
+
+      return;
+    }
+
+    statusEl.textContent = 'Unsupported file type';
   } catch (err) {
     console.error('processFile error', err);
+    const statusEl = document.getElementById('status'+idx);
     statusEl.textContent = 'Error: ' + (err.message || 'unknown');
   }
 }
@@ -414,10 +467,17 @@ async function loadGroups(){
   }
 }
 
-/* Drag & file input hookup */ 
-// Use a lightweight invisible input for click-browse as fallback
+/* Hook statementFormat to update dropzone hint */
+statementFormat.addEventListener('change', () => {
+  const val = statementFormat.value;
+  if (val === 'pdf') dropText.textContent = 'Drag & drop PDF files here or click to browse';
+  else if (val === 'txt') dropText.textContent = 'Drag & drop TXT files here or click to browse';
+  else dropText.textContent = 'Drag & drop PDF or TXT files here or click to browse';
+});
+
+/* Double-click to browse (alternate) */
 dropzone.addEventListener('dblclick', () => {
-  const ip = document.createElement('input'); ip.type='file'; ip.accept='.pdf,application/pdf'; ip.multiple=true;
+  const ip = document.createElement('input'); ip.type='file'; ip.accept='.pdf,.txt,application/pdf,text/plain'; ip.multiple=true;
   ip.onchange = ()=> handleFiles(ip.files);
   ip.click();
 });
@@ -426,7 +486,7 @@ dropzone.addEventListener('dblclick', () => {
 renderQueue();
 loadAccounts();
 loadGroups();
-setSteps('Ready — choose PDFs to upload.');
+setSteps('Ready — choose PDFs/TXTs to upload.');
 </script>
 </body>
 </html>
