@@ -1,14 +1,12 @@
 <?php
-// upload_ui.php
+// upload_ui.php - client UI. Uses PDF.js in-browser text extraction and posts to upload_api.php
 session_start();
 if (!isset($_SESSION['user_id'])) {
     http_response_code(401);
     echo "<!doctype html><html><body><h2>Not authenticated</h2><p>Please login to use the uploader.</p></body></html>";
     exit;
 }
-if (empty($_SESSION['csrf_token'])) {
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(16));
-}
+if (empty($_SESSION['csrf_token'])) $_SESSION['csrf_token'] = bin2hex(random_bytes(16));
 $csrf = $_SESSION['csrf_token'];
 ?>
 <!doctype html>
@@ -16,148 +14,132 @@ $csrf = $_SESSION['csrf_token'];
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Upload Bank Statements — CounterLy</title>
-<link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet">
+<title>Upload Bank Statement — UI</title>
+
+<!-- PDF.js (main script) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.js"></script>
+
 <style>
 :root{
-  --bg:#0b0b0b; --card:#0f1113; --text:#e7e7e7; --muted:rgba(231,231,231,0.55);
-  --accent:#ffa94d; --accent-2:#7c3aed; --glass:rgba(255,255,255,0.02);
-  --radius:12px; --gap:16px;
+  --bg:#0b0b0b; --card:#0f1720; --text:#e7e7e7; --muted:rgba(231,231,231,0.56);
+  --accent1:#ffa94d; --accent2:#7c3aed;
 }
 *{box-sizing:border-box}
-body{margin:0;font-family:Inter,system-ui,Arial;background:linear-gradient(180deg,#0b0b0b,#0f1113);color:var(--text);padding:18px}
+body{margin:0;font-family:Inter,system-ui,Arial;background:var(--bg);color:var(--text);padding:20px}
 .container{max-width:1200px;margin:0 auto}
-.header{display:flex;gap:12px;align-items:center;margin-bottom:18px}
-.logo{width:48px;height:48px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:flex;align-items:center;justify-content:center;font-weight:900;color:#0b0b0b}
-.title{font-size:18px;font-weight:800}
+.header{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.header h1{font-size:20px;margin:0}
 .grid{display:grid;grid-template-columns:1fr 420px;gap:20px}
-@media(max-width:980px){ .grid{grid-template-columns:1fr} }
-.card{background:var(--card);padding:18px;border-radius:var(--radius);border:1px solid rgba(255,255,255,0.02);box-shadow:0 10px 30px rgba(0,0,0,0.6)}
-.section-title{font-weight:800;margin-bottom:8px}
-.small{font-size:13px;color:var(--muted)}
-.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-.dropzone{border:2px dashed rgba(255,255,255,0.04);padding:22px;border-radius:10px;display:flex;flex-direction:column;gap:10px;align-items:center;cursor:pointer;background:var(--glass)}
-.dropzone.dragover{border-color:rgba(255,169,77,0.8);background:rgba(255,169,77,0.02)}
+@media(max-width:980px){ .grid{ grid-template-columns:1fr } }
+.card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:18px;border-radius:12px;border:1px solid rgba(255,255,255,0.03)}
+.instructions p{color:var(--muted);margin:6px 0}
+.dropzone{border:2px dashed rgba(255,255,255,0.04);padding:20px;border-radius:10px;display:flex;flex-direction:column;gap:10px;align-items:center;justify-content:center;cursor:pointer}
+.dropzone.dragover{border-color:rgba(255,169,77,0.85);background:rgba(255,169,77,0.02)}
+.controls{display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap}
 .file-list{margin-top:12px;display:flex;flex-direction:column;gap:10px}
-.file-row{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:10px;border-radius:10px;background:rgba(255,255,255,0.01)}
+.file-row{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:10px;border-radius:10px;background:rgba(255,255,255,0.02)}
 .file-progress{width:220px;height:10px;background:rgba(255,255,255,0.02);border-radius:6px;overflow:hidden}
-.file-progress > i{display:block;height:100%;width:0%;background:linear-gradient(90deg,var(--accent),var(--accent-2))}
-.file-status{font-size:13px;color:var(--muted);min-width:120px;text-align:right}
-.select, input, button, textarea{font-family:inherit}
-.select, input[type="text"], textarea{background:transparent;border:1px solid rgba(255,255,255,0.05);padding:8px;border-radius:8px;color:var(--text)}
-select{padding:8px;border-radius:8px;background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--text)}
-.btn{padding:10px 14px;border-radius:10px;cursor:pointer;border:0;font-weight:800}
-.btn-primary{background:linear-gradient(90deg, rgba(255,169,77,0.12), rgba(124,58,237,0.08));border:1px solid rgba(255,169,77,0.06)}
+.file-progress > i{display:block;height:100%;width:0%;background:linear-gradient(90deg,var(--accent1),var(--accent2))}
+.file-status{font-size:13px;color:var(--muted);min-width:140px;text-align:right}
+.btn{padding:8px 12px;border-radius:8px;cursor:pointer;border:0;font-weight:800}
+.btn-primary{background:linear-gradient(90deg, rgba(255,169,77,0.12), rgba(124,58,237,0.08));border:1px solid rgba(255,169,77,0.06);color:var(--text)}
 .btn-ghost{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--muted)}
-.row{display:flex;gap:12px;align-items:center}
-.footer-note{font-size:12px;color:var(--muted);margin-top:12px}
-.modal { position: fixed; inset: 0; display: none; align-items:center; justify-content:center; z-index:1200; }
-.modal.show { display:flex; }
-.modal .panel { width: 420px; max-width:92%; background:var(--card); padding:16px; border-radius:12px; border:1px solid rgba(255,255,255,0.03); }
-.form-row{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
-.kv{font-size:13px;color:var(--muted)}
-.counterparty-list{margin-top:12px;max-height:280px;overflow:auto}
-.counterparty-item{padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.02);margin-bottom:8px;background:rgba(255,255,255,0.01)}
+.small{font-size:13px;color:var(--muted)}
+.flex-row{display:flex;gap:8px;align-items:center}
+.select, input[type="text"]{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--text);padding:8px;border-radius:8px}
+.counterparty-item{padding:8px;border-radius:8px;background:rgba(255,255,255,0.01);margin-bottom:8px}
+.modal{position:fixed;left:0;top:0;right:0;bottom:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);z-index:60}
+.modal.show{display:flex}
+.modal .mcard{width:420px;max-width:95%;background:var(--card);padding:16px;border-radius:12px}
+.hint{font-size:12px;color:var(--muted);margin-top:8px}
 </style>
 </head>
 <body>
 <div class="container">
   <div class="header">
-    <div class="logo">CL</div>
-    <div>
-      <div class="title">CounterLy — Upload Statements</div>
-      <div class="small">Upload HDFC structured statements. Groups auto-created when counterparty &ge; 2 txns.</div>
-    </div>
-    <div style="flex:1"></div>
-    <div class="small">Signed in</div>
+    <h1>Upload Bank Statements</h1>
+    <div class="small" style="margin-left:auto">Logged in • secure upload</div>
   </div>
 
   <div class="grid">
-    <!-- left: uploader -->
-    <div class="card">
-      <div class="section-title">Upload PDF Statements</div>
-      <div class="small">Select account (or create one) and upload PDF files. Parsing runs server-side.</div>
-
-      <div style="margin-top:12px" class="row">
-        <select id="accountSelect">
-          <option value="">Choose account — loading...</option>
-        </select>
-        <button id="addAccountBtn" class="btn btn-ghost">+ Add account</button>
-      </div>
-
+    <div class="card instructions">
+      <h3>How it works</h3>
+      <p class="small">This UI will try to extract text using <strong>pdf.js</strong> inside your browser and send the extracted text to the server for parsing (best when server lacks `pdftotext`). If extraction fails, the file is uploaded as a PDF and parsed server-side (requires poppler).</p>
+      <p class="small"><strong>Privacy:</strong> extracted text and files are sent only to your account; files are stored with SHA256 checksums to avoid duplicate parsing.</p>
       <div style="margin-top:12px">
-        <div id="dropzone" class="dropzone" tabindex="0">
-          <i class='bx bx-file' style="font-size:36px;color:var(--muted)"></i>
-          <div id="dropText">Drag & drop PDF files here or click to browse</div>
-          <div class="small">Multiple files allowed — Max 20 MB each.</div>
-        </div>
+        <strong>Tips</strong>
+        <ul class="small">
+          <li>Use HDFC PDF statements (layout expected from sample).</li>
+          <li>Max 20 MB per file.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <div id="dropzone" class="dropzone" tabindex="0">
+        <div style="font-size:34px;opacity:0.9">📄</div>
+        <div id="dropText">Drag & drop PDF files here or click to browse</div>
+        <div class="small">Multiple files allowed — parsed one-by-one.</div>
       </div>
 
-      <div class="controls" style="margin-top:12px">
+      <div class="controls">
+        <label class="small"><input type="checkbox" id="useClientExtract" checked> Extract text in browser (pdf.js)</label>
         <label class="small"><input type="checkbox" id="compressPdf"> Compress on server</label>
         <div style="flex:1"></div>
-        <button id="startUpload" class="btn btn-primary">Start upload</button>
+        <select id="accountSelect" class="select small"><option>Loading accounts…</option></select>
+        <button id="startUpload" class="btn btn-primary">Start</button>
         <button id="clearFiles" class="btn btn-ghost">Clear</button>
       </div>
 
       <div class="file-list" id="fileList"></div>
-      <div class="footer-note" id="stepsLog">No uploads yet.</div>
-    </div>
+      <div class="steps-log small" id="stepsLog">No uploads yet.</div>
 
-    <!-- right: groups & actions -->
-    <div class="card">
-      <div class="section-title">Counterparties & Actions</div>
-      <div class="small">Auto-detected groups (counterparties with &ge; 2 transactions). Use promote to create a group from a singleton.</div>
-
-      <div style="margin-top:12px" class="row">
-        <button id="refreshGroups" class="btn btn-primary">Refresh</button>
-        <div style="flex:1"></div>
-        <button id="viewStatements" class="btn btn-ghost">Statements</button>
+      <hr style="margin:12px 0;border-color:rgba(255,255,255,0.03)" />
+      <div style="display:flex;gap:8px;align-items:center;justify-content:space-between">
+        <div>
+          <strong>Groups</strong>
+          <div class="hint">Auto-created when a counterparty appears ≥ 2 times</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button id="refreshGroups" class="btn btn-ghost">Refresh</button>
+          <button id="addAccountBtn" class="btn btn-ghost">Add account</button>
+        </div>
       </div>
-
-      <div id="counterpartyList" class="counterparty-list"></div>
-      <div style="margin-top:12px" class="small">Tip: Promote a transaction from Statements page to create a custom group.</div>
+      <div id="counterpartyList" style="margin-top:10px"></div>
     </div>
   </div>
 </div>
 
-<!-- Add account modal -->
+<!-- modal for add account -->
 <div id="modal" class="modal" aria-hidden="true">
-  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <strong id="modalTitle">Add bank account</strong>
-      <button id="closeModal" class="btn btn-ghost">Close</button>
-    </div>
-    <div class="form-row">
-      <label class="kv">Bank name</label>
-      <input id="bankName" type="text" placeholder="HDFC Bank" />
-    </div>
-    <div class="form-row">
-      <label class="kv">Account masked</label>
-      <input id="acctMask" type="text" placeholder="****4404 (optional)" />
-    </div>
-    <div class="form-row">
-      <label class="kv">IFSC (optional)</label>
-      <input id="ifsc" type="text" placeholder="HDFC0001234" />
-    </div>
-    <div style="display:flex;gap:8px;justify-content:flex-end">
-      <button id="createAccount" class="btn btn-primary">Create</button>
+  <div class="mcard">
+    <h3 style="margin:0 0 8px 0">Add Bank Account</h3>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <input id="bankName" class="select" placeholder="Bank name (e.g. HDFC Bank)" />
+      <input id="acctMask" class="select" placeholder="Account masked (e.g. ****4404) (optional)" />
+      <input id="ifsc" class="select" placeholder="IFSC (optional)" />
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+        <button id="closeModal" class="btn btn-ghost">Close</button>
+        <button id="createAccount" class="btn btn-primary">Create</button>
+      </div>
     </div>
   </div>
 </div>
 
 <script>
-const API = '/Assets/Website/Api/upload_api.php';
+/* Configuration */
+const API_URL = '/Assets/Website/Api/upload_api.php';
 const CSRF = <?php echo json_encode($csrf); ?>;
 const MAX_BYTES = 20 * 1024 * 1024;
-let filesQueue = [];
 
+/* DOM */
 const dropzone = document.getElementById('dropzone');
 const fileListEl = document.getElementById('fileList');
 const startBtn = document.getElementById('startUpload');
 const clearBtn = document.getElementById('clearFiles');
 const stepsLog = document.getElementById('stepsLog');
 const compressCheckbox = document.getElementById('compressPdf');
+const useClientExtract = document.getElementById('useClientExtract');
 const accountSelect = document.getElementById('accountSelect');
 const addAccountBtn = document.getElementById('addAccountBtn');
 const modal = document.getElementById('modal');
@@ -169,9 +151,17 @@ const ifsc = document.getElementById('ifsc');
 const refreshGroups = document.getElementById('refreshGroups');
 const counterpartyList = document.getElementById('counterpartyList');
 
+let filesQueue = [];
+
+/* pdf.js worker - ensure worker path matches version */
+if (window['pdfjsLib']) {
+  // set workerSrc to the same CDN version used for pdf.min.js
+  window['pdfjsLib'].GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js';
+}
+
+/* Utilities */
 function setSteps(msg){ stepsLog.textContent = msg; }
 function escapeHtml(s){ if(!s) return ''; return String(s).replace(/[&<>"']/g, (m)=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]) ); }
-
 function renderQueue(){
   fileListEl.innerHTML = '';
   if(filesQueue.length === 0){ fileListEl.style.display = 'none'; return; }
@@ -194,6 +184,7 @@ function renderQueue(){
   });
 }
 
+/* File handling */
 function handleFiles(list){
   for(const f of list){
     if(f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')){ alert('Only PDF files allowed: ' + f.name); continue; }
@@ -212,83 +203,143 @@ dropzone.addEventListener('keydown', (e)=>{ if(e.key === 'Enter' || e.key === ' 
 clearBtn.addEventListener('click', ()=>{ filesQueue = []; renderQueue(); setSteps('Cleared.'); });
 
 startBtn.addEventListener('click', async ()=> {
-  if (filesQueue.length === 0) return alert('No files selected');
-  if (!confirm('Start upload and parse now?')) return;
+  if(filesQueue.length === 0) return alert('No files selected');
+  if(!confirm('Start upload and parse now?')) return;
   startBtn.disabled = true; clearBtn.disabled = true; setSteps('Starting uploads...');
   const accountId = accountSelect.value ? parseInt(accountSelect.value) : null;
-  for (let i = 0; i < filesQueue.length; i++) {
+  for(let i=0;i<filesQueue.length;i++){
     const item = filesQueue[i];
-    document.getElementById('status'+i).textContent = 'Uploading...';
-    await uploadFile(item.file, i, accountId);
+    // status element might not exist if UI re-rendered; ensure it does
+    const stEl = document.getElementById('status'+i);
+    if(stEl) stEl.textContent = 'Processing...';
+    await processFile(item.file, i, accountId);
   }
   setSteps('All uploads finished. Check Statements page.');
   startBtn.disabled = false; clearBtn.disabled = false;
 });
 
-function updateProgress(idx, pct, status){
-  const prog = document.querySelector('#prog'+idx+' i'); if(prog) prog.style.width = pct + '%';
-  const st = document.getElementById('status'+idx); if(st) st.textContent = status;
+/* PDF.js extraction (client) */
+async function extractPdfText(file){
+  if (!window['pdfjsLib']) throw new Error('pdfjs not loaded');
+  const pdfjsLib = window['pdfjsLib'];
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js';
+  const arrayBuffer = await file.arrayBuffer();
+  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, nativeImageDecoderSupport: 'none' });
+  const pdf = await loadingTask.promise;
+  let text = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    // join tokens preserving spaces
+    text += content.items.map(item => item.str).join(' ') + '\n';
+  }
+  return text;
 }
 
-function uploadFile(file, idx, accountId){
-  return new Promise((resolve) => {
-    const xhr = new XMLHttpRequest();
-    const fd = new FormData();
-    fd.append('statement_pdf', file);
-    fd.append('csrf_token', CSRF);
-    if (accountId) fd.append('account_id', accountId);
-    if (compressCheckbox.checked) fd.append('compress', '1');
-
-    xhr.open('POST', API + '?action=upload', true);
-    xhr.withCredentials = true;
-
-    xhr.upload.onprogress = function(e){ if(e.lengthComputable){ const pct = Math.round((e.loaded / e.total) * 100); updateProgress(idx, pct, 'Uploading ' + pct + '%'); } };
-
-    xhr.onload = function(){
+/* processFile: try client extraction -> upload_text, else fallback to binary upload */
+async function processFile(file, idx, accountId){
+  const statusEl = document.getElementById('status'+idx);
+  const progEl = document.querySelector('#prog'+idx+' i');
+  try {
+    if (useClientExtract.checked) {
+      statusEl.textContent = 'Extracting text (browser)...';
+      let pdfText = '';
       try {
-        const res = JSON.parse(xhr.responseText);
-        if (xhr.status >= 200 && xhr.status < 300 && res.success) {
-          document.getElementById('status'+idx).textContent = 'Uploaded — Parsing';
-          pollParseStatus(res.statement_id, idx).then(()=> resolve());
-        } else {
-          updateProgress(idx, 0, 'Error: ' + (res.error || xhr.status));
-          resolve();
-        }
-      } catch (err) {
-        updateProgress(idx, 0, 'Invalid server response');
-        resolve();
+        pdfText = await extractPdfText(file);
+      } catch(e) {
+        console.warn('Client extraction failed:', e);
       }
-    };
+      if (pdfText && pdfText.trim().length > 30) {
+        // send text to upload_text endpoint
+        statusEl.textContent = 'Uploading extracted text...';
+        progEl.style.width = '20%';
+        const fd = new FormData();
+        fd.append('pdf_text', pdfText);
+        fd.append('filename', file.name);
+        fd.append('csrf_token', CSRF);
+        if (accountId) fd.append('account_id', accountId);
+        if (compressCheckbox.checked) fd.append('compress', '1');
+        const res = await fetch(API_URL + '?action=upload_text', { method: 'POST', credentials: 'include', body: fd });
+        const j = await res.json();
+        if (j.success) {
+          progEl.style.width = '100%';
+          statusEl.textContent = 'Uploaded (text) — Parsing';
+          await pollParseStatus(j.statement_id, idx);
+          return;
+        } else {
+          statusEl.textContent = 'Server error: ' + (j.error||'unknown');
+          return;
+        }
+      } else {
+        // no text extracted -> fallback to direct upload
+        statusEl.textContent = 'No text extracted, falling back to PDF upload';
+      }
+    }
 
-    xhr.onerror = function(){ updateProgress(idx,0,'Network error'); resolve(); };
-    xhr.send(fd);
-  });
+    // fallback binary upload
+    statusEl.textContent = 'Uploading PDF...';
+    progEl.style.width = '5%';
+    const fd2 = new FormData();
+    fd2.append('statement_pdf', file);
+    fd2.append('csrf_token', CSRF);
+    if (accountId) fd2.append('account_id', accountId);
+    if (compressCheckbox.checked) fd2.append('compress', '1');
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', API_URL + '?action=upload', true);
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = function(e){ if(e.lengthComputable){ const pct = Math.round((e.loaded / e.total) * 100); progEl.style.width = pct + '%'; statusEl.textContent = 'Uploading ' + pct + '%'; } };
+    await new Promise((resolve) => {
+      xhr.onload = async function(){
+        let j = null;
+        try { j = JSON.parse(xhr.responseText); } catch(e){ /* ignore */ }
+        if (xhr.status >=200 && xhr.status < 300 && j && j.success) {
+          statusEl.textContent = 'Uploaded — Parsing';
+          progEl.style.width = '100%';
+          await pollParseStatus(j.statement_id, idx);
+        } else {
+          statusEl.textContent = 'Upload failed: ' + (j && j.error ? j.error : xhr.status);
+        }
+        resolve();
+      };
+      xhr.onerror = function(){ statusEl.textContent = 'Network error'; resolve(); };
+      xhr.send(fd2);
+    });
+
+  } catch (err) {
+    console.error('processFile error', err);
+    statusEl.textContent = 'Error: ' + (err.message || 'unknown');
+  }
 }
 
+/* Poll parse status */
 function pollParseStatus(statementId, idx){
   const statusEl = document.getElementById('status'+idx);
   statusEl.textContent = 'Queued for parsing...';
   return new Promise((resolve) => {
     const iv = setInterval(async () => {
       try {
-        const resp = await fetch(API + '?action=status&sid=' + encodeURIComponent(statementId), { credentials: 'include' });
+        const resp = await fetch(API_URL + '?action=status&sid=' + encodeURIComponent(statementId), { credentials: 'include' });
         if (resp.ok) {
           const j = await resp.json();
           if (j.success) {
             if (j.parse_status === 'parsed') { statusEl.textContent = 'Parsed ✓'; clearInterval(iv); resolve(); }
-            else if (j.parse_status === 'error') { statusEl.textContent = 'Error parsing'; clearInterval(iv); resolve(); }
+            else if (j.parse_status === 'error') { statusEl.textContent = 'Error parsing'; console.warn('parse error', j.error_message); clearInterval(iv); resolve(); }
             else { statusEl.textContent = (j.parse_status || 'parsing') + '...'; }
-          } else { statusEl.textContent = 'Error: ' + (j.error||'unknown'); clearInterval(iv); resolve(); }
+          } else {
+            statusEl.textContent = 'Error: ' + (j.error || 'unknown');
+            clearInterval(iv); resolve();
+          }
         }
       } catch(e){
-        // ignore transient
+        // ignore transient network glitches
       }
     }, 2000);
     setTimeout(()=>{ clearInterval(iv); resolve(); }, 120000);
   });
 }
 
-// account management & groups
+/* Accounts & groups */
 addAccountBtn.addEventListener('click', ()=> { modal.classList.add('show'); modal.setAttribute('aria-hidden','false'); bankName.focus(); });
 closeModal.addEventListener('click', ()=> { modal.classList.remove('show'); modal.setAttribute('aria-hidden','true'); });
 
@@ -297,7 +348,7 @@ createAccount.addEventListener('click', async ()=> {
   if (!bank) return alert('Enter bank name');
   createAccount.disabled = true;
   try {
-    const resp = await fetch(API + '?action=add_account', {
+    const resp = await fetch(API_URL + '?action=add_account', {
       method: 'POST',
       credentials: 'include',
       headers: {'Content-Type':'application/json'},
@@ -319,13 +370,13 @@ createAccount.addEventListener('click', async ()=> {
 async function loadAccounts(){
   accountSelect.innerHTML = '<option value="">Loading accounts...</option>';
   try {
-    const resp = await fetch(API + '?action=list_accounts', { credentials: 'include' });
+    const resp = await fetch(API_URL + '?action=list_accounts', { credentials: 'include' });
     const j = await resp.json();
     if (j.success) {
       const rows = j.accounts || [];
       accountSelect.innerHTML = '<option value="">-- Select account (optional) --</option>';
       rows.forEach(r => {
-        const text = `${r.bank_name} ${r.account_number_masked ? ' · ' + r.account_number_masked : ''} ${r.ifsc ? ' · ' + r.ifsc : ''}`;
+        const text = `${r.bank_name}${r.account_number_masked ? ' · ' + r.account_number_masked : ''}${r.ifsc ? ' · ' + r.ifsc : ''}`;
         const opt = document.createElement('option'); opt.value = r.id; opt.textContent = text;
         accountSelect.appendChild(opt);
       });
@@ -341,7 +392,7 @@ refreshGroups.addEventListener('click', loadGroups);
 async function loadGroups(){
   counterpartyList.innerHTML = 'Loading...';
   try {
-    const resp = await fetch(API + '?action=get_groups', { credentials: 'include' });
+    const resp = await fetch(API_URL + '?action=get_groups', { credentials: 'include' });
     const j = await resp.json();
     if (j.success) {
       const rows = j.counterparties || [];
@@ -349,7 +400,7 @@ async function loadGroups(){
       counterpartyList.innerHTML = '';
       rows.forEach(cp => {
         const el = document.createElement('div'); el.className = 'counterparty-item';
-        el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;">
+        el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center">
           <div><strong>${escapeHtml(cp.canonical_name)}</strong><div class="small">tx: ${cp.tx_count} · debit: ${(cp.total_debit_paise/100).toFixed(2)} · credit: ${(cp.total_credit_paise/100).toFixed(2)}</div></div>
           <div><button class="btn btn-ghost" data-id="${cp.id}">View</button></div>
         </div>`;
@@ -363,10 +414,19 @@ async function loadGroups(){
   }
 }
 
-// initial load
+/* Drag & file input hookup */ 
+// Use a lightweight invisible input for click-browse as fallback
+dropzone.addEventListener('dblclick', () => {
+  const ip = document.createElement('input'); ip.type='file'; ip.accept='.pdf,application/pdf'; ip.multiple=true;
+  ip.onchange = ()=> handleFiles(ip.files);
+  ip.click();
+});
+
+/* Init */
+renderQueue();
 loadAccounts();
 loadGroups();
-
+setSteps('Ready — choose PDFs to upload.');
 </script>
 </body>
 </html>
