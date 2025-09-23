@@ -1,5 +1,5 @@
 <?php
-
+// auth_start.php
 if (session_status() === PHP_SESSION_NONE) {
     $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
     $cookieParams = session_get_cookie_params();
@@ -15,7 +15,7 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 
 function loadSecrets() {
-    $keys = ['GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET'];
+    $keys = ['GOOGLE_CLIENT_ID'];
     $out = [];
     foreach ($keys as $k) {
         $v = getenv($k);
@@ -41,41 +41,74 @@ function loadSecrets() {
 
 $secrets = loadSecrets();
 $clientId = $secrets['GOOGLE_CLIENT_ID'] ?? null;
-
-$redirectUri = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http')
-    . '://' . $_SERVER['HTTP_HOST'] . '/Assets/Website/Api/auth_callback.php';
-
 if (!$clientId) {
     http_response_code(500);
-    header('Content-Type: text/plain; charset=utf-8');
-    echo "ERROR: GOOGLE_CLIENT_ID missing. Add it to environment or Assets/Resources/secrets.env";
+    echo "ERROR: GOOGLE_CLIENT_ID missing";
     exit;
 }
+?>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <style>
+    .hidden { display:none; }
+  </style>
+</head>
+<body>
+  <div class="panel" role="main" aria-label="Google sign in">
+    <h2>Continue with Google</h2>
+    <div id="gbtn"></div>
+    <div id="status" class="hidden" role="status"></div>
+  </div>
 
-$state = bin2hex(random_bytes(16));
-$_SESSION['oauth2_state'] = $state;
+  <script>
+    const CLIENT_ID = "<?php echo htmlspecialchars($clientId, ENT_QUOTES); ?>";
 
-$params = [
-    'response_type' => 'code',
-    'client_id' => $clientId,
-    'redirect_uri' => $redirectUri,
-    'scope' => 'openid email profile',
-    'state' => $state,
-    'access_type' => 'offline',
-    'prompt' => 'select_account'
-];
+    function handleCredentialResponse(response) {
+      const id_token = response.credential;
+      if (!id_token) {
+        document.getElementById('status').classList.remove('hidden');
+        document.getElementById('status').textContent = 'No credential received';
+        return;
+      }
 
-$authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' . http_build_query($params);
+      (async () => {
+        try {
+          const res = await fetch('/Assets/Website/Api/auth_callback.php', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id_token })
+          });
+          const j = await res.json();
+          if (res.ok && j.success) {
+            window.location.href = '/dashboard.php';
+          } else {
+            document.getElementById('status').classList.remove('hidden');
+            document.getElementById('status').textContent = j.error || 'Sign-in failed';
+          }
+        } catch (err) {
+          document.getElementById('status').classList.remove('hidden');
+          document.getElementById('status').textContent = 'Network error';
+        }
+      })();
+    }
 
-if (isset($_GET['debug']) && $_GET['debug'] === '1') {
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode([
-        'authUrl' => $authUrl,
-        'state' => $state,
-        'redirect_uri' => $redirectUri
-    ], JSON_PRETTY_PRINT);
-    exit;
-}
-
-header('Location: ' . $authUrl, true, 302);
-exit;
+    window.onload = function() {
+      google.accounts.id.initialize({
+        client_id: CLIENT_ID,
+        callback: handleCredentialResponse,
+        ux_mode: 'popup'
+      });
+      google.accounts.id.renderButton(
+        document.getElementById('gbtn'),
+        { theme: 'outline', size: 'large', type: 'standard' }
+      );
+      google.accounts.id.prompt();
+    };
+  </script>
+</body>
+</html>
