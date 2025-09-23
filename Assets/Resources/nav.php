@@ -217,6 +217,61 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
 }
 .dropdown-menu.open { opacity:1; visibility:visible; transform: translateY(0); }
 
+/* Add pointer arrow for notifications dropdown */
+.notif-menu {
+  position: absolute;
+  right: 0;
+  top: 48px; /* Adjust so it appears just below the bell icon */
+  width: 340px;
+  max-height: 420px;
+  background: var(--card-bg);
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(0,0,0,0.6);
+  border: 1px solid rgba(255,255,255,0.03);
+  overflow: hidden;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-6px);
+  transition: all .14s cubic-bezier(.2,.9,.2,1);
+  z-index: 1100;
+  padding: 0;
+}
+
+/* Show dropdown below icon with pointer */
+.notif-menu.open {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+/* Pointer arrow styling */
+.notif-menu::before {
+  content: "";
+  position: absolute;
+  top: -12px;
+  right: 28px; /* Adjust to align with bell icon */
+  width: 24px;
+  height: 12px;
+  background: transparent;
+  pointer-events: none;
+}
+
+.notif-menu::after {
+  content: "";
+  position: absolute;
+  top: -10px;
+  right: 34px; /* Adjust to align with bell icon */
+  width: 16px;
+  height: 16px;
+  background: var(--card-bg);
+  border-radius: 4px 4px 0 0;
+  box-shadow: 0 -2px 8px rgba(0,0,0,0.12);
+  transform: rotate(45deg);
+  z-index: 1110;
+  border-top: 1px solid rgba(255,255,255,0.03);
+  border-left: 1px solid rgba(255,255,255,0.03);
+}
+
 /* Dropdown interior */
 .dropdown-header { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid rgba(255,255,255,0.02); color:var(--muted); }
 .dropdown-list { overflow:auto; max-height:360px; padding:6px 0; }
