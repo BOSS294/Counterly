@@ -1,11 +1,4 @@
-<?php
-// CLY-02-AP.php — Redesigned dashboard module (updated per request)
-// Changes: darker (black) shadows, removed Upload/View Statements buttons from welcome panel,
-// added Quick Actions as bordered, left-icon buttons with left-aligned text, small welcome panel improvements.
-?>
-
 <style>
-/* Scoped styles for the redesigned dashboard module */
 .dash-mod {
   display: grid;
   grid-template-columns: 1fr 380px;
@@ -16,12 +9,10 @@
 }
 @media (max-width: 980px) { .dash-mod { grid-template-columns: 1fr; padding: 12px; } }
 
-/* card base */
 .card--glass {
   background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.03));
   border-radius: 16px;
   padding: 18px;
-  /* stronger black shadows as requested */
   box-shadow: 0 20px 60px rgba(0,0,0,0.9);
   border: 1px solid rgba(255,255,255,0.03);
 }
@@ -36,7 +27,6 @@
   position: relative;
 }
 
-/* big avatar with neon ring */
 .welcome-avatar {
   width: 140px; height: 140px; border-radius: 18px; overflow: hidden;
   display: grid; place-items: center; flex: 0 0 140px;
@@ -57,7 +47,6 @@
 .welcome-name { color: #FFD39B; font-weight: 900; font-size: 22px; }
 .welcome-sub { color: var(--muted); font-size: 13px; }
 
-/* subtle improvement: small tagline under welcome */
 .welcome-tagline { color: rgba(255,255,255,0.45); font-size:13px; margin-top:4px; }
 
 .role-pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,0.02); color: #FFD39B; font-weight: 800; font-size: 13px; border: 1px solid rgba(255,255,255,0.03); }
@@ -69,7 +58,6 @@
 .kpi-value { font-weight: 900; font-size: 18px; }
 .kpi-label { font-size: 12px; color: var(--muted); font-weight:700; }
 
-/* visual accent column */
 .side-column {
   display: flex; flex-direction: column; gap: 12px;
 }
@@ -84,7 +72,6 @@
 
 .empty-state { color: var(--muted); padding: 18px; text-align: center; border-radius: 10px; background: rgba(255,255,255,0.01); }
 
-/* Quick action buttons: bordered, no background, left icon + left-aligned text */
 .quick-actions { display:flex; flex-direction:column; gap:10px; }
 .quick-action-btn {
   display:flex; align-items:center; gap:12px; padding:10px 12px; border-radius:10px;
@@ -94,16 +81,13 @@
 .quick-action-btn i { min-width:24px; text-align:center; font-size:18px; color:var(--muted); }
 .quick-action-btn:hover { transform: translateY(-3px); box-shadow: 0 14px 36px rgba(0,0,0,0.85); }
 
-/* animations */
 @keyframes floaty { 0% { transform: translateY(0);} 50% { transform: translateY(-6px);} 100% { transform: translateY(0);} }
 .welcome-avatar img:hover { animation: floaty 2.6s ease-in-out infinite; }
 
-/* utility */
 .small { font-size:13px; color:var(--muted); }
 .action-row { display:flex; gap:10px; align-items:center; }
 .btn--primary { background: linear-gradient(90deg, rgba(255,169,77,0.12), rgba(124,58,237,0.08)); padding:10px 14px; border-radius:10px; border:1px solid rgba(255,169,77,0.06); font-weight:800; }
 
-/* responsive tweaks */
 @media (max-width:600px){ .welcome-avatar{ width:96px; height:96px; flex:0 0 96px; } .welcome-name{ font-size:18px; } }
 </style>
 
@@ -132,7 +116,6 @@
             <div class="role-pill" id="todayDate">Loading date</div>
             <div class="role-pill" id="istTime">--:--:-- IST</div>
             <div style="height:6px;"></div>
-            <!-- removed Upload / View Statements buttons per request -->
           </div>
         </div>
 
@@ -223,23 +206,21 @@
 </div>
 
 <script>
-// keep API URL same as you already use
 const API_URL = '/Assets/Website/Api/dashboard_kpis.php';
 
 function toINRNumber(n){
   if (n === null || n === undefined) return 0;
-  return Number(n) / 100.0; // API already returns rupees, but K/V here keep safe
+  return Number(n) / 100.0; 
 }
 
 function toINR(n){
   if (n === null || n === undefined) return '--';
-  // if the API returns paise, convert; if already rupees, this still looks ok
   const val = Number(n);
   if (Math.abs(val) > 1000000) return val.toLocaleString('en-IN', { maximumFractionDigits: 0 });
   return val.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-// animated counter
+
 function animateCount(el, start, end, duration=850){
   const range = end - start;
   let startTime = null;
@@ -299,7 +280,7 @@ async function loadDashboard(){
           <div style='text-align:right; color:var(--muted); font-weight:800;'>${(cp.tx_count ?? 0)} tx</div>
         `;
         div.addEventListener('click', ()=>{
-          // hook: future filter
+
           alert('Filter by ' + cp.canonical_name);
         });
         cpList.appendChild(div);
@@ -308,7 +289,6 @@ async function loadDashboard(){
       cpList.innerHTML = '<div class="empty-state">No counterparties yet.</div>';
     }
 
-    // Chart
     const chartRoot = document.getElementById('chartRoot');
     const chartEmpty = document.getElementById('chartEmpty');
     if (data.chart && data.chart.dates && data.chart.dates.length > 0) {
@@ -345,7 +325,6 @@ async function loadDashboard(){
 
 function escapeHtml(s){ if(!s) return ''; return s.replace(/[&<>\"']/g, (m)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
-// IST clock
 function updateISTClock(){
   const now = new Date();
   const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
@@ -358,7 +337,6 @@ function updateISTClock(){
 }
 setInterval(updateISTClock, 1000); updateISTClock();
 
-// init
 loadDashboard();
 
 </script>
