@@ -1,6 +1,6 @@
 <?php
 
-ini_set('display_errors', '0'); // hide raw errors in production
+ini_set('display_errors', '1'); // hide raw errors in production
 error_reporting(E_ALL);
 header('Content-Type: application/json; charset=utf-8');
 
