@@ -353,66 +353,168 @@ function compute_txn_checksum($account_id, $txn_date, $amount_paise, $reference,
     $canon = sprintf('%s|%s|%d|%s|%s', $account_id ?? '0', $txn_date ?? '', $amount_paise ?? 0, $reference ?? '', normalize_narration($narration));
     return hash('sha256', $canon);
 }
-
 function parse_hdfc_text_to_txns($rawText){
     $lines = preg_split('/\r?\n/u', safe_string($rawText));
     $txns = [];
-    $buffer = null;
+    $nlines = count($lines);
 
+    // Try to detect header row (first occurrence)
+    $headerIndex = null;
+    $headerLine = '';
+    for ($i = 0; $i < $nlines; $i++) {
+        $ln = $lines[$i];
+        if (preg_match('/\bDate\b.*\bValue Dt\b.*\bWithdrawal\b.*\bDeposit\b.*\bClosing Balance\b/i', $ln)) {
+            $headerIndex = $i;
+            $headerLine = $ln;
+            break;
+        }
+    }
+
+    if ($headerIndex !== null) {
+        // compute column positions from header line using mb functions
+        $hl = $headerLine;
+        $datePos = mb_strpos($hl, 'Date') !== false ? mb_strpos($hl, 'Date') : 0;
+        $narrPos = mb_strpos($hl, 'Narration') !== false ? mb_strpos($hl, 'Narration') : ($datePos + 10);
+        $refPos  = mb_strpos($hl, 'Chq') !== false ? mb_strpos($hl, 'Chq') : (mb_strpos($hl, 'Ref') !== false ? mb_strpos($hl, 'Ref') : $narrPos + 40);
+        $valPos  = mb_strpos($hl, 'Value Dt') !== false ? mb_strpos($hl, 'Value Dt') : (mb_strpos($hl, 'Value') !== false ? mb_strpos($hl, 'Value') : $refPos + 20);
+        $withPos = mb_strpos($hl, 'Withdrawal') !== false ? mb_strpos($hl, 'Withdrawal') : (mb_strpos($hl, 'Withdrawal Amt') !== false ? mb_strpos($hl, 'Withdrawal Amt') : $valPos + 10);
+        $depPos  = mb_strpos($hl, 'Deposit') !== false ? mb_strpos($hl, 'Deposit') : $withPos + 18;
+        $balPos  = mb_strpos($hl, 'Closing Balance') !== false ? mb_strpos($hl, 'Closing Balance') : $depPos + 18;
+
+        // Normalise to integers
+        $positions = [
+            'date' => intval($datePos),
+            'narr' => intval($narrPos),
+            'ref'  => intval($refPos),
+            'val'  => intval($valPos),
+            'with' => intval($withPos),
+            'dep'  => intval($depPos),
+            'bal'  => intval($balPos)
+        ];
+
+        // Walk lines and parse by columns. Transaction start lines begin with a date at col 0 (or after small spaces)
+        for ($i = 0; $i < $nlines; $i++) {
+            $raw = $lines[$i];
+            $trim = safe_trim($raw);
+            if ($trim === '') continue;
+            // Skip known header/footer phrases
+            if (preg_match('/hdfc bank ltd|page no\.|statement of accounts|statement from|statement summary|opening balance|dr count|cr count|\*\*continue\*\*/iu', $trim)) continue;
+
+            // detect date at line start (e.g., 01/09/25 or 01-09-2025)
+            if (preg_match('/^\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\b/u', $raw, $dm)) {
+                // Extract columns using positions (use mb_substr)
+                $lnlen = mb_strlen($raw);
+                $slice = function($start, $end=null) use ($raw, $lnlen) {
+                    if ($start >= $lnlen) return '';
+                    if ($end === null) return rtrim(mb_substr($raw, $start));
+                    $len = max(0, $end - $start);
+                    return rtrim(mb_substr($raw, $start, $len));
+                };
+
+                $dateRaw = safe_trim(mb_substr($raw, $positions['date'], max(10, $positions['narr'] - $positions['date'])));
+                $narration = safe_trim($slice($positions['narr'], $positions['ref']));
+                $refField  = safe_trim($slice($positions['ref'], $positions['val']));
+                $valueDt   = safe_trim($slice($positions['val'], $positions['with']));
+                $withdraw  = safe_trim($slice($positions['with'], $positions['dep']));
+                $deposit   = safe_trim($slice($positions['dep'], $positions['bal']));
+                $balance   = safe_trim($slice($positions['bal']));
+
+                // If next lines are continuation lines (do not start with a date), append their narration column slice
+                $j = $i + 1;
+                while ($j < $nlines) {
+                    $next = $lines[$j];
+                    if ($next === null) break;
+                    if (preg_match('/^\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\b/u', $next)) break; // new txn
+                    $cont = safe_trim(mb_substr($next, $positions['narr'], max(0, $positions['ref'] - $positions['narr'])));
+                    if ($cont !== '') {
+                        $narration .= ' ' . preg_replace('/\s+/', ' ', $cont);
+                    }
+                    $j++;
+                }
+                // advance outer loop to j-1
+                $i = $j - 1;
+
+                // Normalize date to YYYY-MM-DD
+                $txn_date = null;
+                if (preg_match('/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/', $dateRaw, $ddm)) {
+                    $dd = str_pad($ddm[1],2,'0',STR_PAD_LEFT);
+                    $mm = str_pad($ddm[2],2,'0',STR_PAD_LEFT);
+                    $yy = $ddm[3];
+                    if (strlen($yy) === 2) $yy = '20' . $yy;
+                    $txn_date = "$yy-$mm-$dd";
+                }
+
+                // Convert amounts to paise using existing helper, but only if token looks monetary (contains digits and dot or comma)
+                $withdraw_val = ($withdraw === '' ? null : preg_replace('/[^0-9\.,\-]/','', $withdraw));
+                $deposit_val = ($deposit === '' ? null : preg_replace('/[^0-9\.,\-]/','', $deposit));
+                $balance_val = ($balance === '' ? null : preg_replace('/[^0-9\.,\-]/','', $balance));
+
+                $withdraw_paise = ($withdraw_val === '' ? null : normalize_amount_to_paise($withdraw_val));
+                $deposit_paise  = ($deposit_val === '' ? null : normalize_amount_to_paise($deposit_val));
+                $balance_paise  = ($balance_val === '' ? 0 : normalize_amount_to_paise($balance_val));
+
+                // Determine txn type (only one side should be present)
+                $txn_type = 'other';
+                if ($withdraw_paise !== null && $withdraw_paise > 0) $txn_type = 'debit';
+                else if ($deposit_paise !== null && $deposit_paise > 0) $txn_type = 'credit';
+
+                // Build clean narration (collapse whitespace)
+                $narr_clean = preg_replace('/\s+/', ' ', $narration);
+
+                // Extract reference from refField if present (some files may have id there)
+                $reference = null;
+                if ($refField !== '') {
+                    if (preg_match('/([A-Za-z0-9\-\/]{6,})/', $refField, $rm)) $reference = $rm[1];
+                }
+
+                $amount_paise = $withdraw_paise !== null ? $withdraw_paise : ($deposit_paise !== null ? $deposit_paise : 0);
+
+                $txns[] = [
+                    'txn_date' => $txn_date,
+                    'narration' => $narr_clean,
+                    'raw_line' => safe_trim($raw),
+                    'reference' => $reference,
+                    'txn_type' => $txn_type,
+                    'amount_paise' => $amount_paise,
+                    'debit_paise' => $withdraw_paise,
+                    'credit_paise' => $deposit_paise,
+                    'balance_paise' => $balance_paise
+                ];
+            }
+        }
+
+        return $txns;
+    }
+
+    // FALLBACK: header not found — use regex-based approach (improved)
+    $buffer = null;
     foreach ($lines as $ln) {
         $ln_trim = safe_trim($ln);
         if ($ln_trim === '') continue;
-
-        // Skip known header/footer boilerplate (case-insensitive)
-        if (preg_match('/hdfc bank ltd|statement of accounts|page no\.?:|account branch|account no|statement from|statement to|a\/c open date|cust id|branch code|product code|rtgs\/neft ifsc|statement summary|opening balance|dr count|cr count|\*\*continue\*\*/iu', $ln_trim)) {
-            // If we hit a statement summary footer, stop parsing further
-            if (preg_match('/statement summary|opening balance.*debits.*credits|dr count|cr count/i', $ln_trim)) break;
-            continue;
-        }
-
-        // Column header separators should be ignored
-        if (preg_match('/^-{2,}|^date\s+narration/i', $ln_trim)) {
-            continue;
-        }
-
-        // If a line starts with a date pattern -> new transaction start
         if (preg_match('/^\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(.+)$/u', $ln_trim)) {
             if ($buffer !== null) {
                 $tx = process_buffer_line($buffer);
                 if ($tx) $txns[] = $tx;
             }
-            // start new buffer; keep original spacing collapsed
-            $buffer = preg_replace('/\s+/', ' ', $ln_trim);
+            $buffer = $ln_trim;
         } else {
-            // continuation line: append but mark separation so numeric extraction won't cross lines wrongly
-            if ($buffer === null) {
-                // stray continuation outside a record — ignore
-                continue;
-            }
-            // Insert a clear separator token between the first-line and continuation lines.
-            $buffer .= ' ||CONT|| ' . preg_replace('/\s+/', ' ', $ln_trim);
+            if ($buffer === null) continue;
+            $buffer .= ' ' . $ln_trim;
         }
     }
-
-    // finalize last buffered transaction
     if ($buffer !== null) {
         $tx = process_buffer_line($buffer);
         if ($tx) $txns[] = $tx;
     }
-
     return $txns;
 }
 function process_buffer_line($line) {
     if ($line === null) return null;
-    // collapse whitespace, keep continuation separator
     $s = preg_replace('/\s+/', ' ', safe_trim($line));
-
-    // Must start with a date
     if (!preg_match('/^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(.*)$/u', $s, $m)) return null;
     $date_raw = safe_trim($m[1]);
     $rest = safe_trim($m[2]);
 
-    // Normalise date => YYYY-MM-DD
     $dateParts = preg_split('/[\/\-]/', $date_raw);
     if (count($dateParts) >= 3) {
         $d = str_pad(safe_trim($dateParts[0]),2,'0',STR_PAD_LEFT);
@@ -420,92 +522,67 @@ function process_buffer_line($line) {
         $y = safe_trim($dateParts[2]);
         if (strlen($y) === 2) $y = '20' . $y;
         $txn_date = "$y-$mth-$d";
-    } else {
-        $txn_date = null;
-    }
+    } else { $txn_date = null; }
 
-    // Remove our internal continuation separator for parsing columns but keep it for name extraction
-    $rest_for_columns = preg_replace('/\s*\|\|CONT\|\|\s*/u', ' ', $rest);
-
-    // Primary attempt: narration + 3 numeric columns at end (withdrawal, deposit, balance)
-    if (preg_match('/^(.*\S)\s+([\d,]+(?:\.\d{1,2})?|-)\s+([\d,]+(?:\.\d{1,2})?|-)\s+([\d,]+(?:\.\d{1,2})?)$/u', $rest_for_columns, $mm)) {
+    // try to match narration + withdrawal + deposit + balance, preventing small numeric tokens (like "78@OKICICI")
+    if (preg_match('/^(.*\S)\s+([\d,]+(?:\.\d{1,2})?|-)\s+([\d,]+(?:\.\d{1,2})?|-)\s+([\d,]+(?:\.\d{1,2})?)$/', $rest, $mm)) {
         $narration = safe_trim($mm[1]);
         $withdraw = $mm[2];
         $deposit = $mm[3];
         $balance = $mm[4];
-    } else if (preg_match('/^(.*\S)\s+([\d,]+(?:\.\d{1,2})?)\s+([\d,]+(?:\.\d{1,2})?)$/u', $rest_for_columns, $mm2)) {
-        // two numeric columns (e.g., withdrawal + balance or deposit + balance)
+    } else if (preg_match('/^(.*\S)\s+([\d,]+(?:\.\d{1,2})?)\s+([\d,]+(?:\.\d{1,2})?)$/', $rest, $mm2)) {
         $narration = safe_trim($mm2[1]);
         $withdraw = $mm2[2];
         $deposit = '-';
         $balance = $mm2[3];
     } else {
-        // FALLBACK: find monetary tokens that are not adjacent to letters or @ (avoid UPI ids)
-        // Use negative lookbehind/ahead to ensure tokens are separated from letters/@
-        if (preg_match_all('/(?<![A-Za-z@])([\d]{1,3}(?:,[\d]{3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)(?![A-Za-z@])/u', $rest_for_columns, $numM)) {
-            $nums = $numM[1];
-            $ncount = count($nums);
-            if ($ncount >= 1) $balance = $nums[$ncount - 1]; else $balance = null;
-            if ($ncount >= 2) $deposit = $nums[$ncount - 2]; else $deposit = '-';
-            if ($ncount >= 3) $withdraw = $nums[$ncount - 3]; else $withdraw = null;
+        // fallback numeric harvest — only take tokens separated from letters/@ by whitespace
+        preg_match_all('/(?<![A-Za-z@])([\d]{1,3}(?:,[\d]{3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)(?![A-Za-z@])/u', $rest, $numM);
+        $nums = $numM[1] ?? [];
+        $ncount = count($nums);
+        if ($ncount == 0) return null;
+        $balance = $nums[$ncount - 1] ?? null;
+        $deposit = ($ncount >= 2 ? $nums[$ncount - 2] : '-');
+        $withdraw = ($ncount >= 3 ? $nums[$ncount - 3] : null);
 
-            // Build narration by removing those monetary tokens (only the ones we detected) and also remove isolated reference-like tokens that are clearly IDs
-            $narration = $rest;
-            // Remove exact tokens matched from the narration for safety (replace with single space)
-            foreach ($nums as $tk) {
-                $narration = preg_replace('/\b' . preg_quote($tk, '/') . '\b/u', ' ', $narration);
-            }
-            // Remove common trailing reference tokens with @ or blocks like '-UPI' etc from the narration for cleanliness
-            $narration = preg_replace('/\s*\|\|CONT\|\|\s*/u', ' ', $narration); // remove our separator
-            $narration = preg_replace('/\s*@[A-Za-z0-9\.\-_]+/u', ' ', $narration);
-            $narration = preg_replace('/-?upi-?/iu', ' ', $narration); // drop literal 'UPI' markers
-            $narration = preg_replace('/-?ubn?\d+/iu', ' ', $narration);
-            $narration = preg_replace('/\s{2,}/u', ' ', $narration);
-            $narration = safe_trim($narration);
-        } else {
-            // nothing that resembles amounts -> give up on this line
-            return null;
+        // build narration by removing the trailing numeric tokens and handles
+        $narration = $rest;
+        foreach ($nums as $tk) {
+            $narration = preg_replace('/\b' . preg_quote($tk, '/') . '\b/u', ' ', $narration);
         }
+        $narration = preg_replace('/\s*@.*$/u','',$narration);
+        $narration = preg_replace('/-?upi-?/iu', ' ', $narration);
+        $narration = preg_replace('/\s{2,}/u', ' ', $narration);
+        $narration = safe_trim($narration);
     }
 
-    // extract reference (ref/chq/utr or email)
     $reference = null;
     if ($narration !== '' && preg_match('/(ref[:\-\s]*|chq[:.\-\s]*|utr[:\-\s]*)([A-Za-z0-9\-\/]+)$/iu', $narration, $mr)) {
         $reference = $mr[2] ?? null;
     } else if ($narration !== '' && preg_match('/([A-Za-z0-9.\-_]+@[A-Za-z0-9.\-]+)/u', $narration, $me)) {
         $reference = $me[1] ?? null;
-    } else {
-        // If the rest contains a long numeric token that looks like a transaction id but not money, capture it as reference
-        if (preg_match('/\b([0-9]{8,})\b/u', $rest, $mr2)) {
-            $reference = $mr2[1];
-        }
     }
 
-    // convert to paise and determine txn type
     $withdraw_paise = ($withdraw === '-' || $withdraw === null ? null : normalize_amount_to_paise($withdraw));
     $deposit_paise  = ($deposit === '-' || $deposit === null ? null : normalize_amount_to_paise($deposit));
     $amount_paise   = $withdraw_paise !== null ? $withdraw_paise : ($deposit_paise !== null ? $deposit_paise : 0);
     $balance_paise  = $balance === null ? 0 : normalize_amount_to_paise($balance);
 
-    $txn_type = 'other';
-    if ($withdraw_paise !== null && $withdraw_paise > 0) $txn_type = 'debit';
-    else if ($deposit_paise !== null && $deposit_paise > 0) $txn_type = 'credit';
-
-    // Keep the full narration (use original collapsed spacing), but also provide a cleaned narration for alias extraction
-    $full_narration = safe_trim($narration);
+    $txn_type = 'other'; if ($withdraw_paise !== null && $withdraw_paise>0) $txn_type = 'debit'; if ($deposit_paise !== null && $deposit_paise>0) $txn_type = 'credit';
 
     return [
-        'txn_date' => $txn_date,
-        'narration' => $full_narration,
-        'raw_line' => $s,
-        'reference' => $reference,
-        'txn_type' => $txn_type,
-        'amount_paise' => $amount_paise,
-        'debit_paise' => $withdraw_paise,
-        'credit_paise' => $deposit_paise,
-        'balance_paise' => $balance_paise
+        'txn_date'=>$txn_date,
+        'narration'=>safe_trim($narration),
+        'raw_line'=>$s,
+        'reference'=>$reference,
+        'txn_type'=>$txn_type,
+        'amount_paise'=>$amount_paise,
+        'debit_paise'=>$withdraw_paise,
+        'credit_paise'=>$deposit_paise,
+        'balance_paise'=>$balance_paise
     ];
 }
+
 
 
 
@@ -571,56 +648,58 @@ function extract_alias_candidate($narration){
     $raw = safe_trim($narration);
     if ($raw === '') return '';
 
-    // Normalize to a simpler working string
     $n = normalize_narration($raw);
 
     // 1) If email present, return it
     if (preg_match('/[a-z0-9.\-\_]+@[a-z0-9\-\.]+/i', $n, $m)) return strtolower($m[0]);
 
-    // 2) If purely 10-digit mobile present, return it
-    if (preg_match('/\b(\d{10})\b/', $n, $m)) return $m[1];
-
-    // 3) If pattern begins with 'upi-' or contains '-upi-' try to extract the name segment
-    //    UPI lines often: UPI-<NAME>-<UPIID>  OR UPI-<NAME>-<SOMETHING>-UPI ...
-    if (preg_match('/(?:^|[^A-Za-z0-9])upi[-\s]*([^\-@]{3,120})(?:[-@]|$)/iu', $n, $m)) {
+    // 2) If narration contains tokens like "UPI-" or starts with "UPI-", try to extract the human name part:
+    if (preg_match('/\bupi[-\s]*([^\-@]{3,160})/iu', $n, $m)) {
         $cand = trim($m[1]);
-        // remove trailing numbers/UPI ids and tokens like "bank", "pay", codes
-        $cand = preg_replace('/\s*@.*$/u', '', $cand);       // remove @... tokens
-        $cand = preg_replace('/\d+/u', '', $cand);           // remove numbers
-        $cand = preg_replace('/\b(yesb|ybl|sbi|axis|okb|okicici|paytm|upi|bank|ltd|pvt|ltd)\b/iu', ' ', $cand);
-        $cand = preg_replace('/[^a-z\s\.&\'\-]/iu','', $cand);
+        // strip trailing tokens that are clearly handles/ids (contain '@' or long digit sequences)
+        $cand = preg_replace('/\s*@.*$/u', '', $cand);
+        // drop any trailing numeric-only tokens
+        $cand = preg_replace('/\b\d{4,}\b/u', '', $cand);
+        // remove common bank/UPI tokens
+        $cand = preg_replace('/\b(yesb|ybl|sbi|axis|okicici|okbank|paytm|bank|hdfc|pvt|ltd|meru|merchant|upi|pay|qr)\b/iu', ' ', $cand);
+        $cand = preg_replace('/[^a-z\s\.\'&\-]/iu', '', $cand);
         $cand = preg_replace('/\s{2,}/u',' ', $cand);
         $cand = safe_trim($cand);
-        if ($cand !== '') return $cand;
+        if ($cand !== '') {
+            // return up to first 4 words
+            $words = preg_split('/\s+/', $cand);
+            return implode(' ', array_slice($words, 0, 4));
+        }
     }
 
-    // 4) Some narrations are hyphen-separated: pick the first hyphen-delimited segment that looks like a name
-    $parts = preg_split('/[-\|\/]/u', $n);
+    // 3) Otherwise split on hyphen and pick first meaningful token that is not numeric or a handle
+    $parts = preg_split('/[-|\/]/u', $n);
     foreach ($parts as $p) {
         $p2 = trim($p);
-        // skip short tokens and tokens that look like codes or UPI ids
-        if (strlen($p2) < 3) continue;
-        if (preg_match('/^(00|000|up|utr|chq|aor|nwd|fee|atm)/iu', $p2)) continue;
-        // remove emails/handles and trailing numbers
-        $p2 = preg_replace('/\s*@.*$/u','',$p2);
-        $p2 = preg_replace('/\d+/u','',$p2);
-        $p2 = preg_replace('/[^a-z\s\.&\'\-]/iu','', $p2);
+        // skip if contains @ or heavy digits (likely handle or ID)
+        if ($p2 === '') continue;
+        if (preg_match('/@/', $p2)) continue;
+        if (preg_match('/\b\d{4,}\b/', $p2)) continue;
+        // skip tokens like 'UPI','NWD','POS','REV','FEE'
+        if (preg_match('/^(upi|nwd|pos|rev|fee|atm|bank|aor|nwd)$/i', $p2)) continue;
+        // clean digits and odd tokens from name
+        $p2 = preg_replace('/\b\d+\b/u','',$p2);
+        $p2 = preg_replace('/[^a-z\s\.\'&\-]/iu','', $p2);
         $p2 = preg_replace('/\s{2,}/u',' ', $p2);
         $p2 = safe_trim($p2);
-        // heuristic: must contain a letter and at least one space (first + last) or be a single-word merchant
-        if ($p2 !== '' && preg_match('/[a-z]/i', $p2)) {
-            // return first up-to-4 words as alias
+        if ($p2 !== '') {
             $words = preg_split('/\s+/', $p2);
             return implode(' ', array_slice($words, 0, 4));
         }
     }
 
-    // 5) fallback: first 3 meaningful words from normalized narration
+    // fallback: first up-to-4 words that are not purely numbers or tokens
     $parts2 = preg_split('/\s+/', $n);
     $out = [];
     foreach ($parts2 as $w) {
         if (preg_match('/^\d+$/', $w)) continue;
         if (strlen($w) < 2) continue;
+        if (preg_match('/^(upi|nwd|pos|rev|fee|atm|bank)$/i', $w)) continue;
         $out[] = $w;
         if (count($out) >= 4) break;
     }
@@ -628,40 +707,84 @@ function extract_alias_candidate($narration){
 }
 
 
+
 function run_grouping_scanner($db, $userId){
+    // fetch transactions for this user which are not yet assigned to a counterparty
     $txs = $db->fetchAll('SELECT id, narration FROM transactions WHERE user_id = ? AND (counterparty_id IS NULL OR counterparty_id = 0)', [$userId]);
     if (empty($txs)) return;
+
     $candidates = [];
     foreach ($txs as $t) {
         $cand = extract_alias_candidate($t['narration']);
-        $ck = substr(normalize_narration($cand),0,200);
+        $cand = safe_trim($cand);
+        if ($cand === '') continue;
+
+        // normalized key for grouping (lowercase, narrow whitespace)
+        $ck = substr(normalize_narration($cand), 0, 200);
+        if ($ck === '') continue;
+
+        // skip overly generic or useless candidates
+        $blacklist = [
+            'payment from phone','payment from','payment','payment from', 'paid via', 'payment from phone', 'payment from phone ', 'payment from ph'
+        ];
+        if (in_array($ck, $blacklist, true)) continue;
+
         if (!isset($candidates[$ck])) $candidates[$ck] = ['count'=>0,'tx_ids'=>[],'sample'=>$cand];
         $candidates[$ck]['count']++;
         $candidates[$ck]['tx_ids'][] = $t['id'];
     }
+
     foreach ($candidates as $ck => $info) {
+        // require at least 2 occurrences to auto-group
         if ($info['count'] < 2) continue;
-        $canonical = mb_strtoupper(substr($info['sample'],0,255));
-        $aliasRow = $db->fetch('SELECT ca.counterparty_id FROM counterparty_aliases ca JOIN counterparties cp ON ca.counterparty_id = cp.id WHERE ca.alias = ? AND cp.user_id = ? LIMIT 1', [$ck, $userId]);
+        $sample = safe_trim($info['sample']);
+        if ($sample === '') continue;
+
+        // Build a user-friendly canonical name (Title Case)
+        $canonical = mb_convert_case($sample, MB_CASE_TITLE, 'UTF-8');
+        $canonical = mb_substr($canonical, 0, 255);
+
+        // 1) See if alias already mapped to an existing counterparty for this user
+        $aliasRow = $db->fetch(
+            'SELECT ca.counterparty_id FROM counterparty_aliases ca JOIN counterparties cp ON ca.counterparty_id = cp.id WHERE ca.alias = ? AND cp.user_id = ? LIMIT 1',
+            [$ck, $userId]
+        );
         $cp_id = $aliasRow['counterparty_id'] ?? null;
+
+        // 2) If not found via alias, find a counterpart by canonical_name
         if (!$cp_id) {
             $existing = $db->fetch('SELECT id FROM counterparties WHERE user_id = ? AND canonical_name = ? LIMIT 1', [$userId, $canonical]);
             if ($existing) $cp_id = $existing['id'];
         }
+
+        // 3) Create new counterparty if still not found
         if (!$cp_id) {
-            $cp_id = $db->insertAndGetId('INSERT INTO counterparties (user_id, canonical_name, type, first_seen, last_seen, tx_count, total_debit_paise, total_credit_paise, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW(), 0, 0, 0, NOW(), NOW())', [$userId, $canonical, 'other']);
+            $cp_id = $db->insertAndGetId(
+                'INSERT INTO counterparties (user_id, canonical_name, type, first_seen, last_seen, tx_count, total_debit_paise, total_credit_paise, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW(), 0, 0, 0, NOW(), NOW())',
+                [$userId, $canonical, 'other']
+            );
         }
+
+        // Ensure the alias row exists pointing to this cp_id
         $existsAlias = $db->fetch('SELECT id FROM counterparty_aliases WHERE counterparty_id = ? AND alias = ? LIMIT 1', [$cp_id, $ck]);
-        if (!$existsAlias) $db->insertAndGetId('INSERT INTO counterparty_aliases (counterparty_id, alias, alias_type, created_at) VALUES (?, ?, ?, NOW())', [$cp_id, $ck, 'narration']);
-        foreach (array_chunk($info['tx_ids'],100) as $chunk) {
-            $placeholders = implode(',', array_fill(0,count($chunk),'?'));
-            $params = $chunk;
-            array_unshift($params, $cp_id);
-            $sql = "UPDATE transactions SET counterparty_id = ?, updated_at = NOW() WHERE id IN ($placeholders)";
+        if (!$existsAlias) {
+            $db->insertAndGetId('INSERT INTO counterparty_aliases (counterparty_id, alias, alias_type, created_at) VALUES (?, ?, ?, NOW())', [$cp_id, $ck, 'narration']);
+        }
+
+        // Update transactions in chunks — include user_id for safety
+        foreach (array_chunk($info['tx_ids'], 100) as $chunk) {
+            $placeholders = implode(',', array_fill(0, count($chunk), '?'));
+            // params: cp_id, user_id, ...tx_ids
+            $params = array_merge([$cp_id, $userId], $chunk);
+            $sql = "UPDATE transactions SET counterparty_id = ?, updated_at = NOW() WHERE user_id = ? AND id IN ($placeholders)";
             $db->execute($sql, $params);
         }
-        $agg = $db->fetch('SELECT COUNT(*) as cnt, SUM(debit_paise) as sdebit, SUM(credit_paise) as scredit FROM transactions WHERE counterparty_id = ?', [$cp_id]);
+
+        // Recompute aggregates for this user/counterparty only
+        $agg = $db->fetch('SELECT COUNT(*) as cnt, SUM(debit_paise) as sdebit, SUM(credit_paise) as scredit FROM transactions WHERE counterparty_id = ? AND user_id = ?', [$cp_id, $userId]);
         $db->execute('UPDATE counterparties SET tx_count = ?, total_debit_paise = COALESCE(?,0), total_credit_paise = COALESCE(?,0), last_seen = NOW(), updated_at = NOW() WHERE id = ?', [ intval($agg['cnt']), intval($agg['sdebit'] ?? 0), intval($agg['scredit'] ?? 0), $cp_id ]);
+
+        // Audit log
         $db->logAudit('auto_group_created','counterparty',$cp_id,['alias'=>$ck,'tx_count'=>$info['count']], $userId);
     }
 }
