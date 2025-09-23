@@ -213,16 +213,16 @@ if (!$clientId) {
     <div class="auth-panel" role="region" aria-labelledby="authHead">
       <h1 id="authHead">Sign in to CounterLy</h1>
       <p class="desc">Use your Google account to create or access your CounterLy workspace. Your statements and parsing history are private and auditable.</p>
-      <a class="google-btn" id="googleSignBtn" title="Continue with Google" rel="nofollow">
+      <a class="google-btn" id="googleSignBtn" title="Continue with Google" rel="nofollow" href="javascript:void(0);">
         <svg width="20" height="20" viewBox="0 0 533.5 544.3" class="google-svg" aria-hidden="true" focusable="false">
           <path fill="#4285F4" d="M533.5 278.4c0-17.4-1.4-34.1-4.1-50.4H272v95.5h146.9c-6.4 34.4-26.1 63.6-55.6 83.2v68.9h89.7c52.6-48.4 82.5-120.1 82.5-197.2z"/>
           <path fill="#34A853" d="M272 544.3c73.6 0 135.6-24.4 180.8-66.3l-89.7-68.9c-25 17-57 27.1-91.1 27.1-69.9 0-129.3-47.2-150.6-110.4H29.9v69.7C75.3 486 167.6 544.3 272 544.3z"/>
           <path fill="#FBBC05" d="M121.4 327.9c-11.3-33.7-11.3-69.9 0-103.6V154.6H29.9c-44.4 88.9-44.4 195.1 0 284l91.5-110.7z"/>
           <path fill="#EA4335" d="M272 108.1c39.9 0 75.9 13.7 104.1 40.6l78.1-78.1C403.9 24.6 335.5 0 272 0 167.6 0 75.3 58.3 29.9 154.6l91.5 69.7c21.3-63.2 80.7-110.4 150.6-110.4z"/>
         </svg>
-        <div id="status" class="hidden" role="status"></div>
         <span>Continue with Google</span>
       </a>
+      <div id="status" class="hidden" role="status"></div>
       <p class="small-muted" style="margin:0; text-align:center;">By continuing you agree to our Terms & Privacy policy.</p>
       <div style="height:6px"></div>
       <div style="display:flex; justify-content:center; gap:10px; align-items:center;">
@@ -233,48 +233,49 @@ if (!$clientId) {
   </aside>
 </div>
 
-  <script>
-    const CLIENT_ID = "<?php echo htmlspecialchars($clientId, ENT_QUOTES); ?>";
+<script>
+  const CLIENT_ID = "<?php echo htmlspecialchars($clientId, ENT_QUOTES); ?>";
 
-    function handleCredentialResponse(response) {
-      const id_token = response.credential;
-      if (!id_token) {
-        document.getElementById('status').classList.remove('hidden');
-        document.getElementById('status').textContent = 'No credential received';
-        return;
-      }
-
-      (async () => {
-        try {
-          const res = await fetch('/Assets/Website/Api/auth_callback.php', {
-            method: 'POST',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id_token })
-          });
-          const j = await res.json();
-          if (res.ok && j.success) {
-            window.location.href = '/dashboard.php';
-          } else {
-            document.getElementById('status').classList.remove('hidden');
-            document.getElementById('status').textContent = j.error || 'Sign-in failed';
-          }
-        } catch (err) {
-          document.getElementById('status').classList.remove('hidden');
-          document.getElementById('status').textContent = 'Network error';
-        }
-      })();
+  function handleCredentialResponse(response) {
+    const id_token = response.credential;
+    if (!id_token) {
+      document.getElementById('status').classList.remove('hidden');
+      document.getElementById('status').textContent = 'No credential received';
+      return;
     }
 
-    window.onload = function() {
-      google.accounts.id.initialize({
-        client_id: CLIENT_ID,
-        callback: handleCredentialResponse,
-        ux_mode: 'popup'
-      });
-      google.accounts.id.renderButton(
-        document.getElementById('googleSignBtn')
-    );
+    (async () => {
+      try {
+        const res = await fetch('/Assets/Website/Api/auth_callback.php', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id_token })
+        });
+        const j = await res.json();
+        if (res.ok && j.success) {
+          window.location.href = '/dashboard.php';
+        } else {
+          document.getElementById('status').classList.remove('hidden');
+          document.getElementById('status').textContent = j.error || 'Sign-in failed';
+        }
+      } catch (err) {
+        document.getElementById('status').classList.remove('hidden');
+        document.getElementById('status').textContent = 'Network error';
+      }
+    })();
+  }
+
+  window.onload = function() {
+    google.accounts.id.initialize({
+      client_id: CLIENT_ID,
+      callback: handleCredentialResponse,
+      ux_mode: 'popup'
+    });
+
+    document.getElementById('googleSignBtn').onclick = function(e) {
+      e.preventDefault();
       google.accounts.id.prompt();
     };
-  </script>
+  };
+</script>
