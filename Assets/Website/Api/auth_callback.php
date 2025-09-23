@@ -46,31 +46,35 @@ if (!$clientId) {
 }
 
 $verifyUrl = 'https://oauth2.googleapis.com/tokeninfo?id_token=' . urlencode($id_token);
-$opts = [
-    "http" => [
-        "timeout" => 5,
-        "header" => "User-Agent: CounterLy/1.0\r\n"
-    ]
-];
-$context = stream_context_create($opts);
-$resp = @file_get_contents($verifyUrl, false, $context);
+
+$ch = curl_init($verifyUrl);
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch, CURLOPT_TIMEOUT, 5);
+curl_setopt($ch, CURLOPT_USERAGENT, 'CounterLy/1.0');
+$resp = curl_exec($ch);
+$curlErr = curl_error($ch);
+$curlInfo = curl_getinfo($ch);
+curl_close($ch);
+
 if ($resp === false) {
-    $errorDetail = '';
-    if (isset($http_response_header) && is_array($http_response_header)) {
-        $errorDetail = implode(" | ", $http_response_header);
-    }
     http_response_code(502);
     echo json_encode([
         'success' => false,
         'error' => 'Token verification failed',
-        'detail' => $errorDetail
+        'curl_error' => $curlErr,
+        'curl_info' => $curlInfo
     ]);
     exit;
 }
+
 $tokenInfo = json_decode($resp, true);
 if (!is_array($tokenInfo) || empty($tokenInfo['aud'])) {
     http_response_code(401);
-    echo json_encode(['success' => false, 'error' => 'Invalid token']);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Invalid token',
+        'google_response' => $resp
+    ]);
     exit;
 }
 
