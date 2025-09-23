@@ -55,6 +55,7 @@ try {
         case 'get_groups': api_get_groups($db); break;
         case 'promote': api_promote($db); break;
         case 'merge_alias': api_merge_alias($db); break;
+        case 'upload_csv': api_upload_csv($db); break;
         default: jsonResp(400, ['success'=>false, 'error'=>'Unknown action']);
     }
 } catch (Throwable $e) {
@@ -161,7 +162,71 @@ function api_upload($db) {
     // Client should extract and POST extracted text to action=upload_text (optionally sending statement_id).
     jsonResp(200, ['success'=>true,'statement_id'=>$stmtId,'note'=>'pdf_stored_no_parse','parse_status'=>'uploaded']);
 }
+/**
+ * API: upload_csv
+ * Accepts: POST with csrf_token + csv_text OR file upload csv_file
+ * Optional: filename, account_id
+ * Behavior: store CSV in Uploads/texts/<user>, create statements row, parse CSV and insert transactions,
+ * returns JSON { success:true, statement_id:..., parse_status:'parsed', inserted_rows: N }
+ */
+function api_upload_csv($db) {
+    $userId = require_auth($db);
+    $csrf = $_POST['csrf_token'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? null;
+    if (!validate_csrf($csrf)) jsonResp(403, ['success'=>false, 'error'=>'Invalid CSRF token']);
 
+    $account_id = isset($_POST['account_id']) ? intval($_POST['account_id']) : null;
+    $filename = safe_trim($_POST['filename'] ?? 'uploaded.csv');
+
+    $csv_text = '';
+    // prefer uploaded file
+    if (!empty($_FILES['csv_file']) && is_uploaded_file($_FILES['csv_file']['tmp_name'])) {
+        $f = $_FILES['csv_file'];
+        if ($f['size'] > MAX_UPLOAD_BYTES) jsonResp(400, ['success'=>false,'error'=>'File too large']);
+        $finfo = new finfo(FILEINFO_MIME_TYPE);
+        $mime = $finfo->file($f['tmp_name']) ?: '';
+        // allow text/csv too
+        if (strpos($mime,'text') === false && strpos(strtolower($f['name']), '.csv') === false) {
+            // still allow but warn
+        }
+        $csv_text = (string)file_get_contents($f['tmp_name']);
+        $filename = safe_trim($f['name'] ?? $filename);
+    } else {
+        $csv_text = $_POST['csv_text'] ?? '';
+    }
+
+    if (safe_trim($csv_text) === '') jsonResp(400, ['success'=>false,'error'=>'No CSV provided']);
+
+    // store CSV file in uploads/texts/<user>
+    $uploaddir = __DIR__ . '/../../Uploads/texts/' . intval($userId);
+    if (!is_dir($uploaddir) && !mkdir($uploaddir, 0700, true)) jsonResp(500, ['success'=>false, 'error'=>'Server storage error']);
+    $timestamp = gmdate('Ymd_His');
+    $safeName = preg_replace('/[^A-Za-z0-9._-]/','_', basename($filename));
+    $stored = $uploaddir . '/' . $timestamp . '_' . $safeName . '.csv';
+    if (file_put_contents($stored, (string)$csv_text) === false) jsonResp(500, ['success'=>false,'error'=>'Failed to store CSV']);
+
+    // create statement row (so imports behave same as parsed statements)
+    try {
+        $stmtId = $db->insertAndGetId(
+            "INSERT INTO statements (user_id, account_id, filename, storage_path, file_size, file_sha256, parse_status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'uploaded', NOW(), NOW())",
+            [$userId, $account_id, $filename, $stored, strlen((string)$csv_text), hash('sha256', (string)$csv_text)]
+        );
+        $db->logAudit('upload_csv','statement',$stmtId,['filename'=>$filename,'account_id'=>$account_id], $userId);
+    } catch (Throwable $e) {
+        $db->writeLocalLog('error','db_insert_statement_failed',['err'=>$e->getMessage()]);
+        jsonResp(500, ['success'=>false,'error'=>'DB insert failed']);
+    }
+
+    // parse and insert CSV synchronously
+    try {
+        $inserted = parse_csv_and_insert($db, $stmtId, $userId, $stored);
+        jsonResp(200, ['success'=>true,'statement_id'=>$stmtId,'parse_status'=>'parsed','inserted_rows'=>$inserted]);
+    } catch (Throwable $e) {
+        $err = substr($e->getMessage(),0,1000);
+        try { $db->execute("UPDATE statements SET parse_status = 'error', error_message = ?, updated_at = NOW() WHERE id = ?", [$err, $stmtId]); } catch (Throwable $_) {}
+        $db->logParse($stmtId,'error','csv_parse_failed',['err'=>$err], $userId);
+        jsonResp(200, ['success'=>false,'statement_id'=>$stmtId,'parse_status'=>'error','error'=>$err]);
+    }
+}
 function api_upload_text($db) {
     $userId = require_auth($db);
     $csrf = $_POST['csrf_token'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? null;
@@ -616,9 +681,202 @@ function process_buffer_line($line) {
 }
 
 
+/**
+ * parse_csv_and_insert
+ * Reads CSV file at $storedPath and inserts transactions.
+ * Returns number of inserted rows.
+ */
+function parse_csv_and_insert($db, $stmtId, $userId, $storedPath) {
+    // update statement status
+    try { $db->execute('UPDATE statements SET parse_status = ?, updated_at = NOW() WHERE id = ?', ['parsing', $stmtId]); } catch (Throwable $_) {}
 
+    // open file safely
+    $fh = @fopen($storedPath, 'r');
+    if (!$fh) throw new RuntimeException('Cannot open CSV file');
 
+    // read header
+    $header = fgetcsv($fh);
+    if ($header === false) { fclose($fh); throw new RuntimeException('CSV empty or unreadable'); }
+    // normalize header names (lowercase trimmed)
+    $hmap = [];
+    foreach ($header as $i => $h) {
+        $key = mb_strtolower(trim((string)$h), 'UTF-8');
+        $hmap[$key] = $i;
+    }
 
+    // helper to lookup a column by several aliases
+    $col = function(array $alts) use ($hmap) {
+        foreach ($alts as $a) {
+            $a = mb_strtolower(trim($a), 'UTF-8');
+            if (array_key_exists($a, $hmap)) return $hmap[$a];
+        }
+        return null;
+    };
+
+    // column indexes (support alternate names)
+    $c_txn_date = $col(['txn_date','date']);
+    $c_value_date = $col(['value_date','value dt','value_dt']);
+    $c_counterparty = $col(['counterparty','counter_party','counter-party']);
+    $c_narration = $col(['narration','description','narr']);
+    $c_reference = $col(['reference','reference_number','ref','ref_no']);
+    $c_txn_type = $col(['txn_type','type']);
+    $c_amount_rupees = $col(['amount_rupees','amount','amount_paise','amt_rupees']);
+    $c_debit_paise = $col(['debit_paise','debit']);
+    $c_credit_paise = $col(['credit_paise','credit']);
+    $c_balance_rupees = $col(['balance_rupees','balance','balance_paise']);
+    $c_raw_line = $col(['raw_line','raw','rawline']);
+
+    // minimal header validation
+    if ($c_txn_date === null || $c_narration === null) {
+        fclose($fh);
+        throw new RuntimeException('CSV missing required columns: txn_date and narration are required');
+    }
+
+    $rows = [];
+    $rowCount = 0;
+    // read each CSV row
+    while (($row = fgetcsv($fh)) !== false) {
+        // skip blank rows
+        if (count($row) === 1 && trim((string)$row[0]) === '') continue;
+        // build associative mapping
+        $rec = [];
+        $rec['txn_date'] = isset($row[$c_txn_date]) ? trim((string)$row[$c_txn_date]) : '';
+        $rec['value_date'] = ($c_value_date !== null && isset($row[$c_value_date])) ? trim((string)$row[$c_value_date]) : null;
+        $rec['counterparty'] = ($c_counterparty !== null && isset($row[$c_counterparty])) ? trim((string)$row[$c_counterparty]) : '';
+        $rec['narration'] = isset($row[$c_narration]) ? trim((string)$row[$c_narration]) : '';
+        $rec['reference'] = ($c_reference !== null && isset($row[$c_reference])) ? trim((string)$row[$c_reference]) : null;
+        $rec['txn_type'] = ($c_txn_type !== null && isset($row[$c_txn_type])) ? strtolower(trim((string)$row[$c_txn_type])) : null;
+        $rec['raw_line'] = ($c_raw_line !== null && isset($row[$c_raw_line])) ? trim((string)$row[$c_raw_line]) : ($rec['txn_date'] . ' ' . $rec['narration']);
+        // amounts: priority: debit_paise/credit_paise columns, else amount_rupees
+        $debit_paise = null;
+        $credit_paise = null;
+        if ($c_debit_paise !== null && isset($row[$c_debit_paise]) && trim((string)$row[$c_debit_paise]) !== '') {
+            // debit column may be already paise or rupees; try to detect decimals
+            $d = trim((string)$row[$c_debit_paise]);
+            // if it contains '.' assume rupees -> convert; if digits-only large, treat as paise
+            if (strpos($d, '.') !== false || strpos($d, ',') !== false) {
+                $debit_paise = normalize_amount_to_paise($d);
+            } else {
+                // integer token: assume rupees if length <= 7? safer to assume rupees unless huge
+                $debit_paise = normalize_amount_to_paise($d);
+            }
+        }
+        if ($c_credit_paise !== null && isset($row[$c_credit_paise]) && trim((string)$row[$c_credit_paise]) !== '') {
+            $cval = trim((string)$row[$c_credit_paise]);
+            $credit_paise = normalize_amount_to_paise($cval);
+        }
+        if (($debit_paise === null || $debit_paise === 0) && ($credit_paise === null || $credit_paise === 0)) {
+            // fallback to amount_rupees column
+            if ($c_amount_rupees !== null && isset($row[$c_amount_rupees]) && trim((string)$row[$c_amount_rupees]) !== '') {
+                $amt = trim((string)$row[$c_amount_rupees]);
+                // if amount column contains paise as integer, normalize_amount_to_paise will handle both
+                $ap = normalize_amount_to_paise($amt);
+                // Determine inferred txn type from txn_type column if present
+                if ($rec['txn_type'] === 'debit' || $rec['txn_type'] === 'dr') {
+                    $debit_paise = $ap;
+                } else if ($rec['txn_type'] === 'credit' || $rec['txn_type'] === 'cr') {
+                    $credit_paise = $ap;
+                } else {
+                    // No txn_type hint — decide by sign or by sample heuristic: if balance increases then credit
+                    // As CSV is pre-filtered we assume positive amounts with txn_type blank are credit if closing balance is greater than previous? Can't determine here — default to debit if ambiguous.
+                    // To be safe: treat as debit if file has "debit_paise" header missing — but since your CSV generator sets txn_type, we'll trust it.
+                    $debit_paise = $ap;
+                }
+            }
+        }
+
+        // normalize txn_date to YYYY-MM-DD if possible
+        $txn_date_norm = null;
+        if (!empty($rec['txn_date']) && preg_match('/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/', $rec['txn_date'], $dm)) {
+            $d = str_pad($dm[1],2,'0',STR_PAD_LEFT);
+            $m = str_pad($dm[2],2,'0',STR_PAD_LEFT);
+            $y = $dm[3]; if (strlen($y) === 2) $y = '20' . $y;
+            $txn_date_norm = "$y-$m-$d";
+        } elseif (preg_match('/^\d{4}\-\d{2}\-\d{2}$/', $rec['txn_date'])) {
+            $txn_date_norm = $rec['txn_date'];
+        } else {
+            $txn_date_norm = null;
+        }
+
+        // if we have value_date normalize similarly
+        $value_date_norm = null;
+        if (!empty($rec['value_date']) && preg_match('/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/', $rec['value_date'], $vm)) {
+            $vd = str_pad($vm[1],2,'0',STR_PAD_LEFT);
+            $vmn = str_pad($vm[2],2,'0',STR_PAD_LEFT);
+            $vy = $vm[3]; if (strlen($vy) === 2) $vy = '20' . $vy;
+            $value_date_norm = "$vy-$vmn-$vd";
+        } elseif (!empty($rec['value_date']) && preg_match('/^\d{4}\-\d{2}\-\d{2}$/', $rec['value_date'])) {
+            $value_date_norm = $rec['value_date'];
+        }
+
+        // decide txn_type reliably
+        $tt = $rec['txn_type'];
+        if (!$tt) {
+            if ($debit_paise !== null && $debit_paise > 0) $tt = 'debit';
+            else if ($credit_paise !== null && $credit_paise > 0) $tt = 'credit';
+            else $tt = 'other';
+        } else {
+            $tt = strtolower($tt);
+            if (in_array($tt, ['dr','debit'])) $tt = 'debit';
+            else if (in_array($tt, ['cr','credit'])) $tt = 'credit';
+            else $tt = 'other';
+        }
+
+        // fallback: compute amount_paise as debit or credit
+        $amount_paise = ($debit_paise !== null && $debit_paise > 0) ? $debit_paise : (($credit_paise !== null && $credit_paise > 0) ? $credit_paise : 0);
+
+        $rows[] = [
+            'txn_date' => $txn_date_norm,
+            'value_date' => $value_date_norm,
+            'narration' => $rec['narration'],
+            'raw_line' => $rec['raw_line'],
+            'reference' => $rec['reference'],
+            'txn_type' => $tt,
+            'amount_paise' => intval($amount_paise),
+            'debit_paise' => $debit_paise === null ? null : intval($debit_paise),
+            'credit_paise' => $credit_paise === null ? null : intval($credit_paise),
+            'balance_paise' => ($c_balance_rupees !== null && isset($row[$c_balance_rupees]) && trim((string)$row[$c_balance_rupees]) !== '') ? normalize_amount_to_paise($row[$c_balance_rupees]) : 0
+        ];
+        $rowCount++;
+    } // end while
+
+    fclose($fh);
+
+    // insert into DB within transaction (same INSERT used in parse_and_insert)
+    $db->beginTransaction();
+    try {
+        $insertSql = "INSERT INTO transactions (statement_id, user_id, account_id, txn_date, narration, raw_line, reference_number, txn_type, amount_paise, debit_paise, credit_paise, balance_paise, txn_checksum, created_at, updated_at) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW()) 
+            ON DUPLICATE KEY UPDATE updated_at = NOW()";
+        foreach ($rows as $r) {
+            $account_id = null;
+            // attach the statement account if present
+            $stmtRow = $db->fetch('SELECT account_id FROM statements WHERE id = ? LIMIT 1', [$stmtId]);
+            if ($stmtRow) $account_id = isset($stmtRow['account_id']) ? intval($stmtRow['account_id']) : null;
+            $txn_checksum = compute_txn_checksum($account_id, $r['txn_date'], $r['amount_paise'], $r['reference'], $r['narration']);
+            $db->query($insertSql, [
+                $stmtId, $userId, $account_id, $r['txn_date'], $r['narration'], $r['raw_line'], $r['reference'], $r['txn_type'], intval($r['amount_paise']), ($r['debit_paise']===null?null:intval($r['debit_paise'])), ($r['credit_paise']===null?null:intval($r['credit_paise'])), intval($r['balance_paise']), $txn_checksum
+            ]);
+        }
+        $db->commit();
+    } catch (Throwable $e) {
+        $db->rollback();
+        throw $e;
+    }
+
+    // run grouping and finalize
+    run_grouping_scanner($db, $userId);
+
+    try {
+        $count = $db->fetch('SELECT COUNT(*) as c FROM transactions WHERE statement_id = ?', [$stmtId])['c'] ?? 0;
+        $db->execute('UPDATE statements SET parse_status = ?, parsed_at = NOW(), tx_count = ?, updated_at = NOW() WHERE id = ?', ['parsed', intval($count), $stmtId]);
+        $db->logParse($stmtId,'info','csv_parse_complete',['inserted'=>$count], $userId);
+    } catch (Throwable $e) {
+        $db->logParse($stmtId,'warning','final_update_failed',['err'=>$e->getMessage()], $userId);
+    }
+
+    return $rowCount;
+}
 function parse_and_insert($db, $stmtId, $userId, $storedPath){
     // mark parsing started
     try {

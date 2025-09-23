@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Statement TXT → CSV Converter</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial; padding:18px; max-width:980px; margin:auto}
+  textarea{width:100%;height:320px;font-family:monospace;font-size:13px}
+  .row{display:flex;gap:8px;align-items:center;margin:8px 0}
+  button{padding:8px 12px}
+  .info{color:#666;font-size:13px}
+  pre{background:#f6f8fa;padding:12px;overflow:auto}
+</style>
+</head>
+<body>
+  <h2>HDFC TXT → CSV converter</h2>
+  <p class="info">Paste the statement text or upload the extracted .txt. Click Convert → Download CSV.</p>
+
+  <div class="row">
+    <input id="file" type="file" accept=".txt,text/plain" />
+    <button id="loadSample">Load small sample</button>
+  </div>
+
+  <textarea id="inputText" placeholder="Paste your .txt statement here..."></textarea>
+
+  <div class="row">
+    <button id="convert">Convert to CSV</button>
+    <a id="downloadLink" style="display:none;margin-left:12px">Download CSV</a>
+    <span id="status" class="info"></span>
+  </div>
+
+  <h4>Preview (first 10 rows)</h4>
+  <pre id="preview"></pre>
+
+<script>
+/**
+ * convertTextToCSV(text) -> returns { csv: string, rows: array }
+ * Single robust function that parses HDFC-like statements into CSV rows.
+ */
+function convertTextToCSV(text) {
+  // helpers
+  const safeTrim = s => (s||'').toString().replace(/\r/g,'').trim();
+  const moneyRe = /\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?/g; // tokens like 1,234.56
+  const dateStartRe = /^\s*(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})\b/;
+
+  function parseMoneyToPaise(str) {
+    if (!str) return null;
+    // pick first money-like substring
+    const m = (''+str).match(/\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?/);
+    if (!m) return null;
+    const cleaned = m[0].replace(/,/g,'');
+    const val = parseFloat(cleaned);
+    if (!isFinite(val)) return null;
+    return Math.round(val * 100); // paise
+  }
+  function paiseToRupees(p) {
+    if (p === null || p === undefined) return '';
+    return (p/100).toFixed(2);
+  }
+
+  // tries to extract a human counterparty from narration
+  function extractCounterparty(narr) {
+    if (!narr) return '';
+    let n = narr.replace(/\s+/g,' ').trim();
+    n = n.replace(/^(rev-|upi-|nwd-|pos-|fee-|int-|cr-|dr-)/i, '');
+    // prefer between "UPI-" and '@' or first '-' separated chunk
+    const upim = n.match(/upi-([^@0-9]+?)(?:@|-[0-9@]|-[a-z0-9]{2,}|$)/i);
+    if (upim) {
+      n = upim[1].trim();
+    } else {
+      let parts = n.split(/\s*-\s*/);
+      let cand = '';
+      for (let p of parts) {
+        p = p.trim();
+        if (!p) continue;
+        if (/@/.test(p)) break;
+        // skip pure long numbers or tokens containing many digits
+        if (p.replace(/\D/g,'').length >= 6) break;
+        if (/^(ubn|utib|hdfc|okicici|yesb|sbi|axis|paytm|sbipay|google|gpay|zomato)/i.test(p)) break;
+        if (/payment from|paid via|payment/i.test(p)) break;
+        cand = p; break;
+      }
+      if (cand) n = cand;
+      else {
+        // fallback: take first word before '@' or number
+        n = n.split(/[@0-9]/)[0].trim();
+      }
+    }
+    // remove trailing tokens and limit to 3 words
+    n = n.replace(/\b(upi|paytm|gpay|sbip|bank|online|paymentfrom|payment)\b/i,'').trim();
+    n = n.replace(/[\.\,\/\_]+$/,'').trim();
+    n = n.split(/\s+/).slice(0,3).join(' ');
+    // Title-case
+    n = n.toLowerCase().replace(/\b\w/g, ch => ch.toUpperCase());
+    return n;
+  }
+
+  // split into lines
+  const lines = text.split(/\r?\n/);
+  let headerLine = null;
+  let headerIdx = -1;
+  for (let i=0;i<lines.length;i++){
+    const ln = lines[i];
+    if (/Date\b.*Value\s*Dt\b.*Withdrawal\b.*Deposit\b.*Closing\s*Balance/i.test(ln)) {
+      headerLine = ln;
+      headerIdx = i;
+      break;
+    }
+  }
+
+  // produce helper to slice columns using header indices
+  function computePositionsFromHeader(hln) {
+    const hl = hln;
+    const datePos = hl.indexOf('Date') >=0 ? hl.indexOf('Date') : 0;
+    const narrPos = hl.indexOf('Narration') >=0 ? hl.indexOf('Narration') : datePos + 10;
+    let refPos = hl.indexOf('Chq') >=0 ? hl.indexOf('Chq') : (hl.indexOf('Ref')>=0?hl.indexOf('Ref') : narrPos + 40);
+    const valPos = hl.indexOf('Value Dt') >=0 ? hl.indexOf('Value Dt') : (hl.indexOf('Value')>=0?hl.indexOf('Value'): refPos + 20);
+    const withPos = hl.indexOf('Withdrawal') >=0 ? hl.indexOf('Withdrawal') : valPos + 10;
+    const depPos = hl.indexOf('Deposit') >=0 ? hl.indexOf('Deposit') : withPos + 18;
+    const balPos = hl.indexOf('Closing Balance') >=0 ? hl.indexOf('Closing Balance') : depPos + 18;
+    return { datePos, narrPos, refPos, valPos, withPos, depPos, balPos };
+  }
+
+  let txns = [];
+
+  if (headerLine) {
+    const pos = computePositionsFromHeader(headerLine);
+    // iterate lines; transaction lines start with a date
+    for (let i=0;i<lines.length;i++) {
+      let raw = lines[i];
+      const trimmed = safeTrim(raw);
+      if (!trimmed) continue;
+      // skip header/footer lines
+      if (/hdfc bank ltd|page no\.|statement of accounts|statement from|statement summary|opening balance|dr count|cr count|\*\*continue\*\*/i.test(trimmed)) continue;
+      if (!dateStartRe.test(raw)) continue;
+      // slice using positions (if index goes past length, substr handles)
+      const lnlen = raw.length;
+      function slice(start, end){
+        if (start >= lnlen) return '';
+        if (end == null) return raw.substring(start).trimRight();
+        return raw.substring(start, Math.min(end, lnlen)).trimRight();
+      }
+      // create base fields
+      let dateRaw = slice(pos.datePos, Math.max(pos.narrPos, pos.datePos+10));
+      let narration = slice(pos.narrPos, pos.refPos);
+      let refField = slice(pos.refPos, pos.valPos);
+      let valueDate = slice(pos.valPos, pos.withPos);
+      let withdrawStr = slice(pos.withPos, pos.depPos);
+      let depositStr = slice(pos.depPos, pos.balPos);
+      let balanceStr = slice(pos.balPos, null);
+
+      // gather continuation lines (following lines that do NOT start with date)
+      let j = i+1;
+      while (j < lines.length) {
+        if (dateStartRe.test(lines[j])) break;
+        // append the narration column slice from continuation line (same columns)
+        let cont = '';
+        if (lines[j].length > pos.narrPos) cont = (lines[j].substring(pos.narrPos, Math.min(pos.refPos, lines[j].length)) || '').trim();
+        if (cont) narration += ' ' + cont.replace(/\s+/g,' ');
+        j++;
+      }
+      i = j-1; // jump outer loop forward
+
+      // normalize date
+      let txnDate = '';
+      const md = dateRaw.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})/);
+      if (md) {
+        let dd = md[1].padStart(2,'0'), mm = md[2].padStart(2,'0'), yy = md[3];
+        if (yy.length===2) yy = '20' + yy;
+        txnDate = `${yy}-${mm}-${dd}`;
+      }
+
+      // validate money tokens (avoid ref numbers)
+      const withdrawMoney = (withdrawStr.match(/\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?/g) || [null])[0] || '';
+      const depositMoney = (depositStr.match(/\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?/g) || [null])[0] || '';
+      const balanceMoney = (balanceStr.match(/\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?/g) || [null])[0] || '';
+
+      const withdrawPaise = withdrawMoney ? parseMoneyToPaise(withdrawMoney) : null;
+      const depositPaise = depositMoney ? parseMoneyToPaise(depositMoney) : null;
+      const balancePaise = balanceMoney ? parseMoneyToPaise(balanceMoney) : null;
+
+      let txnType = 'other';
+      if (withdrawPaise !== null && withdrawPaise > 0) txnType = 'debit';
+      else if (depositPaise !== null && depositPaise > 0) txnType = 'credit';
+
+      // reference: prefer alnum token from refField (skip if it's just a money token)
+      let reference = '';
+      if (refField) {
+        // pick first alnum token longer than 3 that is not money-like
+        let m = refField.match(/[A-Za-z0-9\/\-]{4,}/g);
+        if (m) {
+          // choose the first which is not like the money token
+          reference = m.find(tok => !/^\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?$/.test(tok)) || m[0];
+        } else reference = refField.trim();
+      }
+
+      const cp = extractCounterparty(narration);
+
+      txns.push({
+        txn_date: txnDate,
+        value_date: valueDate || '',
+        counterparty: cp,
+        narration: narration.replace(/\s+/g,' ').trim(),
+        reference: reference,
+        txn_type: txnType,
+        amount_rupees: paiseToRupees(withdrawPaise !== null ? withdrawPaise : (depositPaise !== null ? depositPaise : 0)),
+        debit_paise: withdrawPaise === null ? '' : String(withdrawPaise),
+        credit_paise: depositPaise === null ? '' : String(depositPaise),
+        balance_rupees: paiseToRupees(balancePaise === null ? '' : balancePaise),
+        raw_line: raw.trim()
+      });
+    }
+
+  } else {
+    // Fallback: buffer & regex parsing
+    let buffer = null;
+    for (let ln of lines) {
+      let tln = safeTrim(ln);
+      if (!tln) continue;
+      if (dateStartRe.test(ln)) {
+        if (buffer !== null) {
+          let parsed = parseBufferLine(buffer);
+          if (parsed) txns.push(parsed);
+        }
+        buffer = tln;
+      } else {
+        if (buffer === null) continue;
+        buffer += ' ' + tln;
+      }
+    }
+    if (buffer !== null) {
+      let parsed = parseBufferLine(buffer);
+      if (parsed) txns.push(parsed);
+    }
+  }
+
+  // CSV build
+  const headers = ['txn_date','value_date','counterparty','narration','reference','txn_type','amount_rupees','debit_paise','credit_paise','balance_rupees','raw_line'];
+  const escape = s => {
+    if (s === null || s === undefined) return '';
+    const v = String(s);
+    if (v.includes('"') || v.includes(',') || v.includes('\n')) {
+      return '"' + v.replace(/"/g,'""') + '"';
+    }
+    return v;
+  };
+  const csvRows = [headers.join(',')];
+  for (let r of txns) {
+    csvRows.push(headers.map(h => escape(r[h]||'')).join(','));
+  }
+  return { csv: csvRows.join('\n'), rows: txns };
+
+  // ---------- helper for fallback parsing ----------
+  function parseBufferLine(s) {
+    // try primary fallback regex: date + narration + (maybe reference) + value_date + maybe amounts + balance
+    // capture money tokens only via moneyRe
+    s = s.replace(/\s+/g,' ');
+    const primary = new RegExp('^(\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4})\\s+(.+?)\\s+([A-Za-z0-9\\/\\-]{4,})?\\s*(\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4})\\s*(' + '\\d{1,3}(?:,\\d{3})*(?:\\.\\d{1,2})?' + ')?\\s*(' + '\\d{1,3}(?:,\\d{3})*(?:\\.\\d{1,2})?' + ')?\\s*(' + '\\d{1,3}(?:,\\d{3})*(?:\\.\\d{1,2})?' + ')$');
+    let m = s.match(primary);
+    if (m) {
+      const dateRaw = m[1], restNarr = (m[2]||'').trim(), ref = m[3]||'', valDt = m[4]||'';
+      let a1 = m[5]||'', a2 = m[6]||'', bal = m[7]||'';
+      // decide which of a1/a2 is withdraw/deposit: assume withdraw column is first (HDFC layout)
+      let withdraw = a1 || '';
+      let deposit = a2 || '';
+      const wp = parseMoneyToPaise(withdraw), dp = parseMoneyToPaise(deposit), bp = parseMoneyToPaise(bal);
+      let txnType = 'other';
+      if (wp !== null && wp > 0) txnType = 'debit';
+      else if (dp !== null && dp > 0) txnType = 'credit';
+
+      // normalize date
+      let txnDate = '';
+      const md = dateRaw.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})/);
+      if (md) { let dd = md[1].padStart(2,'0'), mm = md[2].padStart(2,'0'), yy = md[3]; if (yy.length===2) yy = '20'+yy; txnDate = `${yy}-${mm}-${dd}`; }
+
+      const cp = extractCounterparty(restNarr);
+
+      return {
+        txn_date: txnDate,
+        value_date: valDt,
+        counterparty: cp,
+        narration: restNarr,
+        reference: ref,
+        txn_type: txnType,
+        amount_rupees: paiseToRupees(wp !== null ? wp : (dp !== null ? dp : 0)),
+        debit_paise: wp === null ? '' : String(wp),
+        credit_paise: dp === null ? '' : String(dp),
+        balance_rupees: bp === null ? '' : paiseToRupees(bp),
+        raw_line: s
+      };
+    }
+
+    // fallback: try to capture last 3 numeric tokens as deposit/withdraw/balance
+    const fallback = s.match(/^(\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4})\\s+(.+?)\\s+(\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4})\\s+([0-9,]+(?:\\.\\d{1,2})?)?\\s*([0-9,]+(?:\\.\\d{1,2})?)?\\s*([0-9,]+(?:\\.\\d{1,2})?)$/);
+    // simple robust approach: try to find all money tokens in the line (last tokens)
+    let moneyTokens = Array.from((s.match(/\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?/g) || []));
+    // if there are >=1 money tokens, assume last is balance, one before maybe deposit/withdraw
+    if (moneyTokens.length >= 1) {
+      // find first date and narration portion
+      const dateMatch = s.match(/^\s*(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})\s+(.*)/);
+      if (!dateMatch) return null;
+      const dateRaw = dateMatch[1];
+      const rest = dateMatch[2];
+      // separate value_date if present (rare)
+      let value_date = '';
+      let restNarr = rest;
+      const vdMatch = rest.match(/(\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4})\s+/);
+      if (vdMatch) {
+        value_date = vdMatch[1];
+        restNarr = rest.replace(vdMatch[0],'');
+      }
+      let balance = parseMoneyToPaise(moneyTokens.pop());
+      let maybe = moneyTokens.length ? parseMoneyToPaise(moneyTokens.pop()) : null;
+      // decide debit vs credit heuristically by presence (if maybe present -> treat as withdraw)
+      let withdraw = null, deposit = null;
+      if (maybe !== null) {
+        withdraw = maybe;
+      } else {
+        // if only one money token -> ambiguous; check narration: words like 'PAYMENT FROM' indicates credit
+        if (/payment from|paid via|payment/i.test(restNarr)) deposit = maybe;
+        else withdraw = maybe;
+      }
+      let txnType = 'other';
+      if (withdraw !== null) txnType = 'debit';
+      else if (deposit !== null) txnType = 'credit';
+
+      const md = dateRaw.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})/);
+      let txnDate = '';
+      if (md) { let dd = md[1].padStart(2,'0'), mm = md[2].padStart(2,'0'), yy = md[3]; if (yy.length===2) yy = '20'+yy; txnDate = `${yy}-${mm}-${dd}`; }
+
+      const cp = extractCounterparty(restNarr);
+
+      return {
+        txn_date: txnDate,
+        value_date: value_date,
+        counterparty: cp,
+        narration: restNarr,
+        reference: '',
+        txn_type: txnType,
+        amount_rupees: paiseToRupees(withdraw !== null ? withdraw : (deposit !== null ? deposit : 0)),
+        debit_paise: withdraw === null ? '' : String(withdraw),
+        credit_paise: deposit === null ? '' : String(deposit),
+        balance_rupees: balance === null ? '' : paiseToRupees(balance),
+        raw_line: s
+      };
+    }
+    return null;
+  } // end parseBufferLine
+} // end convertTextToCSV
+
+// ----- UI wiring -----
+document.getElementById('file').addEventListener('change', async (ev) => {
+  const f = ev.target.files[0];
+  if (!f) return;
+  if (!f.name.toLowerCase().endsWith('.txt')) {
+    if (!confirm('File does not have .txt extension. Try parse anyway?')) return;
+  }
+  const txt = await f.text();
+  document.getElementById('inputText').value = txt;
+});
+
+document.getElementById('loadSample').addEventListener('click', ()=> {
+  const sample = `--------  ----------------------------------------  ----------------  --------  ------------------  ------------------  ------------------
+Date      Narration                    Chq./Ref.No.      Value Dt  Withdrawal Amt.        Deposit Amt.     Closing Balance
+--------  ----------------------------------------  ----------------  --------  ------------------  ------------------  ------------------
+
+01/09/25  UPI-VEDANT DEVENDRA PADH-VEDANTPADHIYAR1  0000561034216912  01/09/25                                100.00              103.33   
+          78@OKICICI-UBIN0566934-561034216912-UPI
+01/09/25  UPI-ISHWAR FUELS-Q501479440@YBL-YESB0YBL  0000110607405658  01/09/25             100.00                                   3.33   
+          UPI-110607405658-UPI
+01/09/25  UPI-VIDYASAGAR CHAUDHARI-9770472492@AXIS  0000229168912445  01/09/25                                200.00              203.33   
+          BANK-UTIB0000587-229168912445-UPI
+`;
+  document.getElementById('inputText').value = sample;
+});
+
+document.getElementById('convert').addEventListener('click', () => {
+  const txt = document.getElementById('inputText').value;
+  if (!txt || !txt.trim()) { alert('Paste or upload a .txt statement first'); return; }
+  document.getElementById('status').textContent = 'Parsing...';
+  try {
+    const out = convertTextToCSV(txt);
+    // create blob + download link
+    const blob = new Blob([out.csv], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.getElementById('downloadLink');
+    a.href = url;
+    a.download = 'statement_parsed.csv';
+    a.style.display = 'inline-block';
+    a.textContent = 'Download CSV';
+    document.getElementById('status').textContent = `Converted ${out.rows.length} rows`;
+    // preview up to 10 rows
+    const preview = out.rows.slice(0,10).map(r => `${r.txn_date} | ${r.counterparty} | ${r.txn_type} | ${r.amount_rupees} | ${r.narration}`).join('\\n');
+    document.getElementById('preview').textContent = preview || '(no rows parsed)';
+  } catch (err) {
+    console.error(err);
+    document.getElementById('status').textContent = 'Parse error: ' + (err && err.message ? err.message : String(err));
+  }
+});
+</script>
+</body>
+</html>

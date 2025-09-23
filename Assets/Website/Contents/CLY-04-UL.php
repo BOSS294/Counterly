@@ -488,5 +488,218 @@ loadAccounts();
 loadGroups();
 setSteps('Ready — choose PDFs/TXTs to upload.');
 </script>
+<script>
+// === CSV Upload / Preview / Send ===
+// Assumes variables from your page exist:
+//   API_URL, CSRF, accountSelect, file input handling, renderQueue() ... etc.
+// Adds CSV handling on top of existing file flow.
+
+(function(){
+  /* helper CSV parser (simple RFC4180-ish) */
+  function parseCSV(text) {
+    // returns array of rows (each row is array of cells)
+    const rows = [];
+    let i = 0, len = text.length;
+    let cur = '', row = [], inQuotes = false;
+    while (i < len) {
+      const ch = text[i];
+      const nxt = text[i+1];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (nxt === '"') { cur += '"'; i += 2; continue; } // escaped quote
+          inQuotes = false; i++; continue;
+        } else {
+          cur += ch; i++; continue;
+        }
+      } else {
+        if (ch === '"') { inQuotes = true; i++; continue; }
+        if (ch === ',') { row.push(cur); cur = ''; i++; continue; }
+        if (ch === '\r') { i++; continue; }
+        if (ch === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; i++; continue; }
+        cur += ch; i++;
+      }
+    }
+    // final cell
+    if (inQuotes) {
+      // malformed csv - still flush
+      row.push(cur);
+      rows.push(row);
+    } else {
+      if (cur !== '' || row.length>0) { row.push(cur); rows.push(row); }
+    }
+    return rows;
+  }
+
+  function headerIndexMap(headers) {
+    const map = {};
+    headers.forEach((h, idx) => {
+      map[h.trim().toLowerCase()] = idx;
+    });
+    return map;
+  }
+
+  // Validate presence of required headers (allow some alternates)
+  function validateHeaders(hmap) {
+    const required = [
+      ['txn_date','date'],
+      ['narration'],
+      ['counterparty'],
+      ['txn_type'],
+      ['amount_rupees','amount','amount_paise'],
+      ['debit_paise','debit'],
+      ['credit_paise','credit'],
+      ['balance_rupees','balance','balance_paise']
+    ];
+    const missing = [];
+    for (const alt of required) {
+      const ok = alt.some(a => a && (a in hmap));
+      if (!ok) missing.push(alt[0]);
+    }
+    return missing;
+  }
+
+  function rowsToObjects(rows) {
+    if (!rows || rows.length === 0) return [];
+    const headers = rows[0].map(h => (h||'').trim());
+    const hmap = headerIndexMap(headers);
+    const missing = validateHeaders(hmap);
+    if (missing.length) throw new Error('CSV missing required columns: ' + missing.join(', '));
+    const objs = [];
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r];
+      // Skip empty lines
+      if (row.join('').trim() === '') continue;
+      const get = (names) => {
+        if (!Array.isArray(names)) names = [names];
+        for (const n of names) {
+          if (n && (n in hmap)) return (row[hmap[n]]||'').trim();
+        }
+        return '';
+      };
+      const o = {
+        txn_date: get(['txn_date','date']),
+        value_date: get(['value_date']),
+        counterparty: get(['counterparty']),
+        narration: get(['narration']),
+        reference: get(['reference','reference_number']),
+        txn_type: get(['txn_type']),
+        amount_rupees: get(['amount_rupees','amount']),
+        debit_paise: get(['debit_paise','debit']),
+        credit_paise: get(['credit_paise','credit']),
+        balance_rupees: get(['balance_rupees','balance'])
+      };
+      objs.push(o);
+    }
+    return objs;
+  }
+
+  function previewCSV(text) {
+    try {
+      const rows = parseCSV(text);
+      const objs = rowsToObjects(rows);
+      return { rows, objs, error: null };
+    } catch (err) {
+      return { rows: null, objs: null, error: err.message || String(err) };
+    }
+  }
+
+  // UI elements used in your page:
+  const csvInput = document.createElement('input');
+  csvInput.type = 'file';
+  csvInput.accept = '.csv,text/csv';
+  csvInput.multiple = false;
+
+  // Add a small CSV upload button to the dropzone (or reuse existing dropzone logic)
+  const csvBtn = document.createElement('button');
+  csvBtn.type = 'button';
+  csvBtn.textContent = 'Upload CSV';
+  csvBtn.title = 'Upload pre-parsed CSV (converted by the converter)';
+  csvBtn.style.marginLeft = '8px';
+  // append near startBtn if available
+  const startBtn = document.getElementById('startUpload');
+  if (startBtn && startBtn.parentNode) startBtn.parentNode.appendChild(csvBtn);
+
+  csvBtn.addEventListener('click', ()=> csvInput.click());
+  csvInput.addEventListener('change', async (ev) => {
+    const f = ev.target.files[0];
+    if (!f) return;
+    if (f.size > MAX_BYTES) { alert('CSV too large'); return; }
+    const txt = await f.text();
+    const pr = previewCSV(txt);
+    if (pr.error) { alert('CSV parse error: ' + pr.error); return; }
+    // show preview (first 10) - reuse preview element if exists
+    const previewEl = document.getElementById('preview');
+    if (previewEl) {
+      previewEl.textContent = pr.objs.slice(0,10).map(r => `${r.txn_date} | ${r.counterparty} | ${r.txn_type} | ${r.amount_rupees} | ${r.narration}`).join('\n');
+    }
+    if (!confirm(`CSV seems valid with ${pr.objs.length} rows. Upload to server and insert into DB?`)) return;
+
+    // upload CSV as text to API action=upload_csv
+    try {
+      const fd = new FormData();
+      fd.append('csv_text', txt);
+      fd.append('filename', f.name);
+      fd.append('csrf_token', CSRF);
+      const accountId = accountSelect.value ? accountSelect.value : '';
+      if (accountId) fd.append('account_id', accountId);
+
+      // optional: allow chunked progress UI by using fetch; show steps
+      const status = document.getElementById('status0') || document.getElementById('stepsLog');
+      if (status) status.textContent = 'Uploading CSV...';
+      const resp = await fetch(API_URL + '?action=upload_csv', { method: 'POST', credentials: 'include', body: fd });
+      const j = await resp.json();
+      if (j.success) {
+        if (status) status.textContent = `CSV uploaded, statement_id=${j.statement_id}. Parsing completed: ${j.parse_status||'parsed'}. Inserted ${j.inserted_rows||'?' } rows.`;
+        alert('CSV uploaded and processed successfully.');
+        // optionally refresh groups/accounts
+        if (typeof loadGroups === 'function') loadGroups();
+      } else {
+        alert('Server error: ' + (j.error || 'unknown'));
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Upload failed: ' + (err && err.message ? err.message : String(err)));
+    }
+  });
+
+  // also support pasting CSV text into inputText and a new button "Upload pasted CSV"
+  const pasteBtn = document.createElement('button');
+  pasteBtn.type = 'button';
+  pasteBtn.textContent = 'Upload pasted CSV';
+  pasteBtn.style.marginLeft = '8px';
+  if (startBtn && startBtn.parentNode) startBtn.parentNode.appendChild(pasteBtn);
+  pasteBtn.addEventListener('click', async () => {
+    const txt = document.getElementById('inputText').value || '';
+    if (!txt.trim()) return alert('Paste CSV text into the large textarea first.');
+    const pr = previewCSV(txt);
+    if (pr.error) return alert('CSV parse error: ' + pr.error);
+    if (!confirm(`CSV seems valid with ${pr.objs.length} rows. Upload now?`)) return;
+    try {
+      const fd = new FormData();
+      fd.append('csv_text', txt);
+      fd.append('filename', 'pasted.csv');
+      fd.append('csrf_token', CSRF);
+      const accountId = accountSelect.value ? accountSelect.value : '';
+      if (accountId) fd.append('account_id', accountId);
+      const status = document.getElementById('stepsLog');
+      if (status) status.textContent = 'Uploading CSV...';
+      const resp = await fetch(API_URL + '?action=upload_csv', { method: 'POST', credentials: 'include', body: fd });
+      const j = await resp.json();
+      if (j.success) {
+        if (status) status.textContent = `CSV uploaded, statement_id=${j.statement_id}. Parsing completed: ${j.parse_status||'parsed'}. Inserted ${j.inserted_rows||'?' } rows.`;
+        alert('CSV uploaded and processed successfully.');
+        if (typeof loadGroups === 'function') loadGroups();
+      } else {
+        alert('Server error: ' + (j.error || 'unknown'));
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Upload failed: ' + (err && err.message ? err.message : String(err)));
+    }
+  });
+
+})(); // IIFE end
+</script>
+
 </body>
 </html>
