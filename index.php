@@ -16,6 +16,7 @@
     <meta name="twitter:title" content="Counterly - Real-Time Counter App">
     <meta name="twitter:description" content="Track your numbers and stats in real-time with Counterly.">
     <meta name="twitter:image" content="ARAM SE LGAUNGA">
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <link rel="stylesheet" href="/Assets/Resources/base.css">
 </head>
     <body>

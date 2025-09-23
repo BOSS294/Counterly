@@ -1,6 +1,50 @@
 <?php
+// auth_start.php
 if (session_status() === PHP_SESSION_NONE) {
+    $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off');
+    $cookieParams = session_get_cookie_params();
+    session_set_cookie_params([
+        'lifetime' => $cookieParams['lifetime'],
+        'path' => $cookieParams['path'],
+        'domain' => $cookieParams['domain'],
+        'secure' => $secure,
+        'httponly' => true,
+        'samesite' => 'Lax'
+    ]);
     session_start();
+}
+
+function loadSecrets() {
+    $keys = ['GOOGLE_CLIENT_ID'];
+    $out = [];
+    foreach ($keys as $k) {
+        $v = getenv($k);
+        if ($v !== false && $v !== '') $out[$k] = $v;
+    }
+    $secretsPath = __DIR__ . '/../../Resources/secrets.env';
+    if (is_readable($secretsPath)) {
+        $lines = file($secretsPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '' || $line[0] === '#') continue;
+            $parts = explode('=', $line, 2);
+            if (count($parts) === 2) {
+                $k = trim($parts[0]);
+                $v = trim($parts[1]);
+                $v = preg_replace('/^["\']|["\']$/', '', $v);
+                if (!isset($out[$k])) $out[$k] = $v;
+            }
+        }
+    }
+    return $out;
+}
+
+$secrets = loadSecrets();
+$clientId = $secrets['GOOGLE_CLIENT_ID'] ?? null;
+if (!$clientId) {
+    http_response_code(500);
+    echo "ERROR: GOOGLE_CLIENT_ID missing";
+    exit;
 }
 ?>
 <style>
@@ -176,6 +220,7 @@ if (session_status() === PHP_SESSION_NONE) {
           <path fill="#FBBC05" d="M121.4 327.9c-11.3-33.7-11.3-69.9 0-103.6V154.6H29.9c-44.4 88.9-44.4 195.1 0 284l91.5-110.7z"/>
           <path fill="#EA4335" d="M272 108.1c39.9 0 75.9 13.7 104.1 40.6l78.1-78.1C403.9 24.6 335.5 0 272 0 167.6 0 75.3 58.3 29.9 154.6l91.5 69.7c21.3-63.2 80.7-110.4 150.6-110.4z"/>
         </svg>
+        <div id="status" class="hidden" role="status"></div>
         <span>Continue with Google</span>
       </a>
       <p class="small-muted" style="margin:0; text-align:center;">By continuing you agree to our Terms & Privacy policy.</p>
@@ -187,3 +232,50 @@ if (session_status() === PHP_SESSION_NONE) {
     </div>
   </aside>
 </div>
+
+  <script>
+    const CLIENT_ID = "<?php echo htmlspecialchars($clientId, ENT_QUOTES); ?>";
+
+    function handleCredentialResponse(response) {
+      const id_token = response.credential;
+      if (!id_token) {
+        document.getElementById('status').classList.remove('hidden');
+        document.getElementById('status').textContent = 'No credential received';
+        return;
+      }
+
+      (async () => {
+        try {
+          const res = await fetch('/Assets/Website/Api/auth_callback.php', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id_token })
+          });
+          const j = await res.json();
+          if (res.ok && j.success) {
+            window.location.href = '/dashboard.php';
+          } else {
+            document.getElementById('status').classList.remove('hidden');
+            document.getElementById('status').textContent = j.error || 'Sign-in failed';
+          }
+        } catch (err) {
+          document.getElementById('status').classList.remove('hidden');
+          document.getElementById('status').textContent = 'Network error';
+        }
+      })();
+    }
+
+    window.onload = function() {
+      google.accounts.id.initialize({
+        client_id: CLIENT_ID,
+        callback: handleCredentialResponse,
+        ux_mode: 'popup'
+      });
+      google.accounts.id.renderButton(
+        document.getElementById('googleSignBtn'),
+        { theme: 'outline', size: 'large', type: 'standard' }
+      );
+      google.accounts.id.prompt();
+    };
+  </script>
