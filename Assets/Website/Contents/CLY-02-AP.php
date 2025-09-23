@@ -217,8 +217,6 @@
       <div class="quick-actions">
         <a href="/app/upload.php" class="quick-action-btn"><i class='bx bx-upload'></i><span>Upload statement</span></a>
         <a href="/app/counterparties.php" class="quick-action-btn"><i class='bx bx-group'></i><span>Manage counterparties</span></a>
-        <a href="/app/settings.php" class="quick-action-btn"><i class='bx bx-user'></i><span>Profile & settings</span></a>
-        <a href="/app/reports.php" class="quick-action-btn"><i class='bx bx-file-blank'></i><span>Download reports</span></a>
       </div>
     </div>
   </div>
