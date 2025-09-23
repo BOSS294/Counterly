@@ -355,7 +355,7 @@ function compute_txn_checksum($account_id, $txn_date, $amount_paise, $reference,
 }
 
 function parse_hdfc_text_to_txns($rawText){
-    $lines = preg_split('/\r?\n/', safe_string($rawText));
+    $lines = preg_split('/\r?\n/u', safe_string($rawText));
     $txns = [];
     $buffer = null;
 
@@ -363,37 +363,38 @@ function parse_hdfc_text_to_txns($rawText){
         $ln_trim = safe_trim($ln);
         if ($ln_trim === '') continue;
 
-        // Skip known header lines and page boilerplate
-        if (preg_match('/hdfc bank ltd|statement of accounts|page no\.?:|account branch|account no|statement from|statement to|a\/c open date|cust id|branch code|product code|rtgs\/neft ifsc/i', $ln_trim)) {
-            continue;
-        }
-        // Skip column header separators and lines
-        if (preg_match('/^-{2,}|^date\s+narration|^--------|^\*\*continue\*\*/i', $ln_trim)) {
+        // Skip known header/footer boilerplate (case-insensitive)
+        if (preg_match('/hdfc bank ltd|statement of accounts|page no\.?:|account branch|account no|statement from|statement to|a\/c open date|cust id|branch code|product code|rtgs\/neft ifsc|statement summary|opening balance|dr count|cr count|\*\*continue\*\*/iu', $ln_trim)) {
+            // If we hit a statement summary footer, stop parsing further
+            if (preg_match('/statement summary|opening balance.*debits.*credits|dr count|cr count/i', $ln_trim)) break;
             continue;
         }
 
-        // Stop parsing when footer statement summary appears
-        if (preg_match('/statement summary|opening balance.*debits.*credits|dr count|cr count|statement summary\s*:-/i', $ln_trim)) {
-            break;
+        // Column header separators should be ignored
+        if (preg_match('/^-{2,}|^date\s+narration/i', $ln_trim)) {
+            continue;
         }
 
-        // Transaction lines usually start with a date in dd/mm/yy or dd-mm-yyyy etc.
-        if (preg_match('/^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(.+)$/', $ln_trim)) {
+        // If a line starts with a date pattern -> new transaction start
+        if (preg_match('/^\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(.+)$/u', $ln_trim)) {
             if ($buffer !== null) {
                 $tx = process_buffer_line($buffer);
                 if ($tx) $txns[] = $tx;
             }
-            $buffer = $ln_trim;
+            // start new buffer; keep original spacing collapsed
+            $buffer = preg_replace('/\s+/', ' ', $ln_trim);
         } else {
-            // continuation line (part of narration etc.)
+            // continuation line: append but mark separation so numeric extraction won't cross lines wrongly
             if ($buffer === null) {
-                // stray continuation (likely page header) — ignore
+                // stray continuation outside a record — ignore
                 continue;
             }
-            $buffer .= ' ' . $ln_trim;
+            // Insert a clear separator token between the first-line and continuation lines.
+            $buffer .= ' ||CONT|| ' . preg_replace('/\s+/', ' ', $ln_trim);
         }
     }
 
+    // finalize last buffered transaction
     if ($buffer !== null) {
         $tx = process_buffer_line($buffer);
         if ($tx) $txns[] = $tx;
@@ -403,12 +404,15 @@ function parse_hdfc_text_to_txns($rawText){
 }
 function process_buffer_line($line) {
     if ($line === null) return null;
+    // collapse whitespace, keep continuation separator
     $s = preg_replace('/\s+/', ' ', safe_trim($line));
-    if (!preg_match('/^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(.*)$/', $s, $m)) return null;
-    $date_raw = isset($m[1]) ? safe_trim($m[1]) : '';
-    $rest = isset($m[2]) ? safe_trim($m[2]) : '';
 
-    // normalise date
+    // Must start with a date
+    if (!preg_match('/^(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s+(.*)$/u', $s, $m)) return null;
+    $date_raw = safe_trim($m[1]);
+    $rest = safe_trim($m[2]);
+
+    // Normalise date => YYYY-MM-DD
     $dateParts = preg_split('/[\/\-]/', $date_raw);
     if (count($dateParts) >= 3) {
         $d = str_pad(safe_trim($dateParts[0]),2,'0',STR_PAD_LEFT);
@@ -416,67 +420,93 @@ function process_buffer_line($line) {
         $y = safe_trim($dateParts[2]);
         if (strlen($y) === 2) $y = '20' . $y;
         $txn_date = "$y-$mth-$d";
-    } else { $txn_date = null; }
-
-    // Try to capture narration + (optional) chq/ref + value dt + withdrawal + deposit + balance
-    // We look for the last three numeric groups (withdrawal, deposit, closing) if present.
-    if (preg_match('/(.*)\s+([\d,]+(?:\.\d{1,2})?|-)\s+([\d,]+(?:\.\d{1,2})?|-)\s+([\d,]+(?:\.\d{1,2})?)$/', $rest, $mm)) {
-        $narration = isset($mm[1]) ? safe_trim($mm[1]) : '';
-        $withdraw = isset($mm[2]) ? $mm[2] : null;
-        $deposit = isset($mm[3]) ? $mm[3] : null;
-        $balance = isset($mm[4]) ? $mm[4] : null;
-    } else if (preg_match('/(.*)\s+([\d,]+(?:\.\d{1,2})?)\s+([\d,]+(?:\.\d{1,2})?)$/', $rest, $mm2)) {
-        // sometimes there are only two number columns (withdrawal and balance or deposit and balance)
-        $narration = isset($mm2[1]) ? safe_trim($mm2[1]) : '';
-        $withdraw = isset($mm2[2]) ? $mm2[2] : null;
-        $deposit = '-';
-        $balance = isset($mm2[3]) ? $mm2[3] : null;
     } else {
-        // if numbers not found at the end, attempt looser capture:
-        // There are cases where OCR/text layout places numbers differently. As a fallback, attempt to pick numbers anywhere.
-        if (preg_match_all('/([\d,]+(?:\.\d{1,2})?)/', $rest, $numM)) {
+        $txn_date = null;
+    }
+
+    // Remove our internal continuation separator for parsing columns but keep it for name extraction
+    $rest_for_columns = preg_replace('/\s*\|\|CONT\|\|\s*/u', ' ', $rest);
+
+    // Primary attempt: narration + 3 numeric columns at end (withdrawal, deposit, balance)
+    if (preg_match('/^(.*\S)\s+([\d,]+(?:\.\d{1,2})?|-)\s+([\d,]+(?:\.\d{1,2})?|-)\s+([\d,]+(?:\.\d{1,2})?)$/u', $rest_for_columns, $mm)) {
+        $narration = safe_trim($mm[1]);
+        $withdraw = $mm[2];
+        $deposit = $mm[3];
+        $balance = $mm[4];
+    } else if (preg_match('/^(.*\S)\s+([\d,]+(?:\.\d{1,2})?)\s+([\d,]+(?:\.\d{1,2})?)$/u', $rest_for_columns, $mm2)) {
+        // two numeric columns (e.g., withdrawal + balance or deposit + balance)
+        $narration = safe_trim($mm2[1]);
+        $withdraw = $mm2[2];
+        $deposit = '-';
+        $balance = $mm2[3];
+    } else {
+        // FALLBACK: find monetary tokens that are not adjacent to letters or @ (avoid UPI ids)
+        // Use negative lookbehind/ahead to ensure tokens are separated from letters/@
+        if (preg_match_all('/(?<![A-Za-z@])([\d]{1,3}(?:,[\d]{3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)(?![A-Za-z@])/u', $rest_for_columns, $numM)) {
             $nums = $numM[1];
-            $balance = end($nums);
-            $deposit = (count($nums) >= 2 ? $nums[count($nums)-2] : '-');
-            $withdraw = (count($nums) >= 3 ? $nums[count($nums)-3] : null);
-            // narration = rest with numeric groups removed
-            $narration = trim(preg_replace('/([\d,]+(?:\.\d{1,2})?)/','', $rest));
+            $ncount = count($nums);
+            if ($ncount >= 1) $balance = $nums[$ncount - 1]; else $balance = null;
+            if ($ncount >= 2) $deposit = $nums[$ncount - 2]; else $deposit = '-';
+            if ($ncount >= 3) $withdraw = $nums[$ncount - 3]; else $withdraw = null;
+
+            // Build narration by removing those monetary tokens (only the ones we detected) and also remove isolated reference-like tokens that are clearly IDs
+            $narration = $rest;
+            // Remove exact tokens matched from the narration for safety (replace with single space)
+            foreach ($nums as $tk) {
+                $narration = preg_replace('/\b' . preg_quote($tk, '/') . '\b/u', ' ', $narration);
+            }
+            // Remove common trailing reference tokens with @ or blocks like '-UPI' etc from the narration for cleanliness
+            $narration = preg_replace('/\s*\|\|CONT\|\|\s*/u', ' ', $narration); // remove our separator
+            $narration = preg_replace('/\s*@[A-Za-z0-9\.\-_]+/u', ' ', $narration);
+            $narration = preg_replace('/-?upi-?/iu', ' ', $narration); // drop literal 'UPI' markers
+            $narration = preg_replace('/-?ubn?\d+/iu', ' ', $narration);
+            $narration = preg_replace('/\s{2,}/u', ' ', $narration);
+            $narration = safe_trim($narration);
         } else {
+            // nothing that resembles amounts -> give up on this line
             return null;
         }
     }
 
-    // reference extraction: ref/chq/utr or email
+    // extract reference (ref/chq/utr or email)
     $reference = null;
-    if ($narration !== '' && preg_match('/(ref[:\-\s]*|chq[:.\-\s]*|utr[:\-\s]*)([A-Za-z0-9\-\/]+)$/i', $narration, $mr)) {
+    if ($narration !== '' && preg_match('/(ref[:\-\s]*|chq[:.\-\s]*|utr[:\-\s]*)([A-Za-z0-9\-\/]+)$/iu', $narration, $mr)) {
         $reference = $mr[2] ?? null;
-    } else if ($narration !== '' && preg_match('/[a-z0-9.\-\_]+@[a-z0-9\-\.]+/i', $narration, $mu)) {
-        $reference = $mu[0] ?? null;
+    } else if ($narration !== '' && preg_match('/([A-Za-z0-9.\-_]+@[A-Za-z0-9.\-]+)/u', $narration, $me)) {
+        $reference = $me[1] ?? null;
     } else {
-        // sometimes ref appears after narration separated by multiple spaces - try to pluck trailing token of letters/digits
-        if (preg_match('/([A-Za-z0-9]{6,})$/', $rest, $mr2)) {
+        // If the rest contains a long numeric token that looks like a transaction id but not money, capture it as reference
+        if (preg_match('/\b([0-9]{8,})\b/u', $rest, $mr2)) {
             $reference = $mr2[1];
         }
     }
 
+    // convert to paise and determine txn type
     $withdraw_paise = ($withdraw === '-' || $withdraw === null ? null : normalize_amount_to_paise($withdraw));
     $deposit_paise  = ($deposit === '-' || $deposit === null ? null : normalize_amount_to_paise($deposit));
     $amount_paise   = $withdraw_paise !== null ? $withdraw_paise : ($deposit_paise !== null ? $deposit_paise : 0);
     $balance_paise  = $balance === null ? 0 : normalize_amount_to_paise($balance);
-    $txn_type = 'other'; if ($withdraw_paise !== null) $txn_type = 'debit'; if ($deposit_paise !== null) $txn_type = 'credit';
+
+    $txn_type = 'other';
+    if ($withdraw_paise !== null && $withdraw_paise > 0) $txn_type = 'debit';
+    else if ($deposit_paise !== null && $deposit_paise > 0) $txn_type = 'credit';
+
+    // Keep the full narration (use original collapsed spacing), but also provide a cleaned narration for alias extraction
+    $full_narration = safe_trim($narration);
 
     return [
-        'txn_date'=>$txn_date,
-        'narration'=>$narration,
-        'raw_line'=>$s,
-        'reference'=>$reference,
-        'txn_type'=>$txn_type,
-        'amount_paise'=>$amount_paise,
-        'debit_paise'=>$withdraw_paise,
-        'credit_paise'=>$deposit_paise,
-        'balance_paise'=>$balance_paise
+        'txn_date' => $txn_date,
+        'narration' => $full_narration,
+        'raw_line' => $s,
+        'reference' => $reference,
+        'txn_type' => $txn_type,
+        'amount_paise' => $amount_paise,
+        'debit_paise' => $withdraw_paise,
+        'credit_paise' => $deposit_paise,
+        'balance_paise' => $balance_paise
     ];
 }
+
 
 
 function parse_and_insert($db, $stmtId, $userId, $storedPath){
@@ -537,43 +567,66 @@ function parse_and_insert($db, $stmtId, $userId, $storedPath){
         $db->logParse($stmtId,'warning','final_update_failed',['err'=>$e->getMessage()], $userId);
     }
 }
-
 function extract_alias_candidate($narration){
     $raw = safe_trim($narration);
     if ($raw === '') return '';
 
-    // 1) email
-    if (preg_match('/[a-z0-9.\-\_]+@[a-z0-9\-\.]+/i',$raw,$m)) return $m[0];
+    // Normalize to a simpler working string
+    $n = normalize_narration($raw);
 
-    // 2) 10-digit mobile-like numbers
-    if (preg_match('/(\d{10})/',$raw,$m)) return $m[1];
+    // 1) If email present, return it
+    if (preg_match('/[a-z0-9.\-\_]+@[a-z0-9\-\.]+/i', $n, $m)) return strtolower($m[0]);
 
-    // 3) masked account patterns like **4404
-    if (preg_match('/\*{2,}([0-9]{2,4})/',$raw,$m)) return 'acct_mask_'.$m[1];
+    // 2) If purely 10-digit mobile present, return it
+    if (preg_match('/\b(\d{10})\b/', $n, $m)) return $m[1];
 
-    // 4) common HDFC style: fields separated by hyphens. e.g. "UPI-VIDYASAGAR CHAUDHARI-977047..."
-    //    If hyphenated, prefer the second segment as the name (fall back safe).
-    $parts = preg_split('/\s*-\s*/', $raw);
-    if (count($parts) >= 2) {
-        $first = trim($parts[0]);
-        $candidate = trim($parts[1]);
+    // 3) If pattern begins with 'upi-' or contains '-upi-' try to extract the name segment
+    //    UPI lines often: UPI-<NAME>-<UPIID>  OR UPI-<NAME>-<SOMETHING>-UPI ...
+    if (preg_match('/(?:^|[^A-Za-z0-9])upi[-\s]*([^\-@]{3,120})(?:[-@]|$)/iu', $n, $m)) {
+        $cand = trim($m[1]);
+        // remove trailing numbers/UPI ids and tokens like "bank", "pay", codes
+        $cand = preg_replace('/\s*@.*$/u', '', $cand);       // remove @... tokens
+        $cand = preg_replace('/\d+/u', '', $cand);           // remove numbers
+        $cand = preg_replace('/\b(yesb|ybl|sbi|axis|okb|okicici|paytm|upi|bank|ltd|pvt|ltd)\b/iu', ' ', $cand);
+        $cand = preg_replace('/[^a-z\s\.&\'\-]/iu','', $cand);
+        $cand = preg_replace('/\s{2,}/u',' ', $cand);
+        $cand = safe_trim($cand);
+        if ($cand !== '') return $cand;
+    }
 
-        // remove trailing tokens like @bank or numbers from candidate
-        $candidate = preg_replace('/\s*@.+$/','',$candidate);     // remove emails/handles
-        $candidate = preg_replace('/\s*\d.*$/','',$candidate);    // remove trailing numbers
-        $candidate = trim($candidate);
-
-        if ($candidate !== '') {
-            // return canonical lowercased / normalised for grouping
-            return normalize_narration($candidate);
+    // 4) Some narrations are hyphen-separated: pick the first hyphen-delimited segment that looks like a name
+    $parts = preg_split('/[-\|\/]/u', $n);
+    foreach ($parts as $p) {
+        $p2 = trim($p);
+        // skip short tokens and tokens that look like codes or UPI ids
+        if (strlen($p2) < 3) continue;
+        if (preg_match('/^(00|000|up|utr|chq|aor|nwd|fee|atm)/iu', $p2)) continue;
+        // remove emails/handles and trailing numbers
+        $p2 = preg_replace('/\s*@.*$/u','',$p2);
+        $p2 = preg_replace('/\d+/u','',$p2);
+        $p2 = preg_replace('/[^a-z\s\.&\'\-]/iu','', $p2);
+        $p2 = preg_replace('/\s{2,}/u',' ', $p2);
+        $p2 = safe_trim($p2);
+        // heuristic: must contain a letter and at least one space (first + last) or be a single-word merchant
+        if ($p2 !== '' && preg_match('/[a-z]/i', $p2)) {
+            // return first up-to-4 words as alias
+            $words = preg_split('/\s+/', $p2);
+            return implode(' ', array_slice($words, 0, 4));
         }
     }
 
-    // 5) fallback: use first up to 4 words of normalized narration
-    $n = normalize_narration($raw);
+    // 5) fallback: first 3 meaningful words from normalized narration
     $parts2 = preg_split('/\s+/', $n);
-    return implode(' ', array_slice($parts2,0,4));
+    $out = [];
+    foreach ($parts2 as $w) {
+        if (preg_match('/^\d+$/', $w)) continue;
+        if (strlen($w) < 2) continue;
+        $out[] = $w;
+        if (count($out) >= 4) break;
+    }
+    return implode(' ', $out);
 }
+
 
 function run_grouping_scanner($db, $userId){
     $txs = $db->fetchAll('SELECT id, narration FROM transactions WHERE user_id = ? AND (counterparty_id IS NULL OR counterparty_id = 0)', [$userId]);
