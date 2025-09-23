@@ -220,7 +220,7 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
 /* Add pointer arrow for notifications dropdown */
 .notif-menu {
   position: absolute;
-  right: 0;
+  right: 70;
   top: 48px; /* Adjust so it appears just below the bell icon */
   width: 340px;
   max-height: 420px;
@@ -248,8 +248,8 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
 .notif-menu::before {
   content: "";
   position: absolute;
-  top: -12px;
-  right: 28px; /* Adjust to align with bell icon */
+  top: 12px;
+  left: 28px; /* Adjust to align with bell icon */
   width: 24px;
   height: 12px;
   background: transparent;
