@@ -273,9 +273,8 @@ if (!$clientId) {
         ux_mode: 'popup'
       });
       google.accounts.id.renderButton(
-        document.getElementById('googleSignBtn'),
-        { theme: 'outline', size: 'large', type: 'standard' }
-      );
+        document.getElementById('googleSignBtn')
+    );
       google.accounts.id.prompt();
     };
   </script>
