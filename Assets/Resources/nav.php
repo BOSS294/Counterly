@@ -1,35 +1,36 @@
 <?php
-// nav.php — User top navigation for signed-in dashboard
+// nav.php — User top navigation (theme-accurate)
 // - Uses session values set by auth_callback.php: user_id, user_name, user_email, user_avatar
-// - Default name = "Ammer Aadmi"
-// - No admin checks or admin redirects
-// - Single notification placeholder: "Notifications are coming soon..."
-// - Quick Actions removed; GitHub icon present
-// - Safe HTML escaping via esc()
-
+// - Defaults: user_name = "Ammer Aadmi", role = "Member"
+// - Single placeholder notification
+// - GitHub icon included
+// - Styling fully uses CSS variables from /Assets/Resources/base.css
+// - ChaGPT ka pryog
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
+/* If not logged in as user -> redirect to home/sign-in page */
 if (empty($_SESSION['user_id'])) {
     header('Location: /');
     exit;
 }
 
-$__user_name   = $_SESSION['user_name'] ?? 'Nahi Pta Bhai';
-$__user_role   = $_SESSION['user_role'] ?? 'Ammer Aadmi';
+/* Pull session values (fallbacks) */
+$__user_name   = $_SESSION['user_name'] ?? 'Ammer Aadmi';
+$__user_role   = $_SESSION['user_role'] ?? 'Member';
 $__user_avatar = $_SESSION['user_avatar'] ?? '/Assets/Website/Images/default-avatar.png';
 
 function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 ?>
 <head>
   <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="https://coderresources.icu/Assets/Resources/base.css">
+  <link rel="stylesheet" href="/Assets/Resources/base.css">
 </head>
 
 <nav class="site-header nav-fullwidth" role="navigation" aria-label="User top navigation">
   <div class="container nav-row">
-    <div class="nav-left" style="min-width:220px;">
+    <div class="nav-left">
       <div class="nav-title" aria-hidden="false">
         <div class="title-main">CounterLy <small class="version">V1</small></div>
         <div class="title-sub small-muted">Concise dashboard • grouped insights</div>
@@ -37,8 +38,9 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
     </div>
 
     <div class="nav-right" role="toolbar" aria-label="Top controls">
+      <!-- Notifications -->
       <div class="nav-control">
-        <button id="notif-toggle" class="btn btn-ghost btn-pill icon-btn" aria-haspopup="true" aria-expanded="false" aria-controls="notif-menu" title="Notifications" type="button">
+        <button id="notif-toggle" class="btn icon-btn" aria-haspopup="true" aria-expanded="false" aria-controls="notif-menu" title="Notifications" type="button">
           <i class='bx bx-bell' aria-hidden="true"></i>
           <span id="notif-badge" class="notif-badge" aria-hidden="true">1</span>
           <span class="sr-only">Open notifications</span>
@@ -63,7 +65,6 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
                 <div class="notif-sub">We'll show important updates here.</div>
               </div>
             </div>
-
             <div id="notif-empty" class="notif-empty" role="none" aria-hidden="true" style="display:none;">
               <i class='bx bx-bell' aria-hidden="true"></i>
               You're all caught up
@@ -72,15 +73,17 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
         </div>
       </div>
 
+      <!-- GitHub -->
       <div class="nav-control">
-        <a class="btn btn-ghost icon-btn" href="https://github.com/your-repo" target="_blank" rel="noopener noreferrer" title="View on GitHub">
+        <a class="btn icon-btn" href="https://github.com/your-repo" target="_blank" rel="noopener noreferrer" title="View on GitHub">
           <i class='bx bxl-github' aria-hidden="true"></i>
           <span class="sr-only">Open GitHub repository</span>
         </a>
       </div>
 
+      <!-- User -->
       <div class="user-wrap" aria-haspopup="true">
-        <button id="user-toggle" class="btn btn-ghost user-btn" aria-controls="user-menu" aria-expanded="false" type="button">
+        <button id="user-toggle" class="btn user-btn" aria-controls="user-menu" aria-expanded="false" type="button">
           <span class="avatar">
             <img src="<?= esc($__user_avatar) ?>" alt="<?= esc($__user_name) ?> avatar" loading="lazy">
           </span>
@@ -105,6 +108,7 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
 </nav>
 
 <style>
+
 .nav-fullwidth {
   position: sticky;
   top: 0;
@@ -112,25 +116,44 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
   width: 100%;
   left: 0;
   border-radius: 0;
-  background: linear-gradient(180deg, rgba(6,18,15,0.94), rgba(10,26,22,0.92));
-  border-bottom: 1px solid rgba(255,255,255,0.02);
+  background: var(--bg-base);
+  background-image: var(--bg-gradient);
+  border-bottom: 1px solid rgba(255,255,255,0.03);
   box-shadow: var(--shadow-deep);
 }
-.nav-row { display:flex; gap:20px; align-items:center; padding:8px 18px; }
+.nav-row { display:flex; gap:20px; align-items:center; padding:10px 20px; }
 
-/* Left side */
-.nav-left { display:flex; gap:12px; align-items:center; }
+/* Left */
+.nav-left { display:flex; gap:12px; align-items:center; min-width:220px; }
 .nav-title { display:flex; flex-direction:column; line-height:1; }
-.title-main { font-weight:900; font-size:15px; color:var(--text); display:flex; align-items:center; gap:8px; }
+.title-main { font-weight:900; font-size:16px; color:var(--text); display:flex; align-items:center; gap:10px; }
 .version { font-weight:700; font-size:11px; color:var(--muted); margin-left:6px; }
 .title-sub { font-size:12px; color:var(--muted); margin-top:2px; }
 
-/* Right side */
-.nav-right { display:flex; gap:10px; align-items:center; margin-left:auto; }
+/* Right */
+.nav-right { display:flex; gap:12px; align-items:center; margin-left:auto; }
 
-/* Buttons */
-.icon-btn { display:inline-flex; align-items:center; justify-content:center; padding:8px 10px; color:var(--muted); }
-.icon-btn:hover { color:var(--text); transform:translateY(-2px); }
+/* Button baseline: visible border + subtle 3D (shadow) pre-hover */
+.btn {
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding:8px 10px;
+  border-radius:12px;
+  border: 1px solid rgba(255,255,255,0.03); /* subtle base border */
+  background: linear-gradient(180deg, rgba(255,255,255,0.01), rgba(0,0,0,0.02));
+  transition: transform var(--transition-fast) ease, box-shadow var(--transition-fast) ease, border-color var(--transition-fast) ease, color var(--transition-fast) ease;
+  color: var(--muted);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35); /* base depth */
+}
+
+/* Icon buttons slightly smaller */
+.icon-btn { padding:8px; border-radius:10px; min-width:40px; justify-content:center; }
+
+/* Make icons use theme muted color; accent on hover */
+.icon-btn i, .btn i { font-size:18px; color: var(--muted); transition: color var(--transition-fast) ease; }
 
 /* Notification badge */
 .notif-badge {
@@ -139,86 +162,99 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
   height:20px;
   padding:0 6px;
   border-radius:999px;
-  font-weight:900;
+  font-weight:800;
   font-size:12px;
   line-height:20px;
   text-align:center;
   background: linear-gradient(90deg, var(--accent), var(--accent-2));
   color: var(--text);
-  box-shadow: 0 6px 20px rgba(47,122,74,0.08);
-  margin-left:6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  margin-left:8px;
   vertical-align:middle;
 }
 
-/* User wrap */
-.user-wrap { position:relative; display:flex; align-items:center; gap:8px; }
-.user-btn { display:flex; align-items:center; gap:10px; padding:6px 10px; border-radius:999px; }
-.avatar { width:44px; height:44px; border-radius:999px; overflow:hidden; display:grid; place-items:center; background:linear-gradient(135deg, rgba(149,214,164,0.06), rgba(47,122,74,0.02)); border:1px solid rgba(255,255,255,0.02); }
-.avatar img { width:100%; height:100%; object-fit:cover; display:block; }
-.user-info { min-width:160px; max-width:320px; display:flex; flex-direction:column; align-items:flex-start; text-align:left; }
-.user-name { font-weight:900; font-size:14px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.user-role { font-size:11px; color:var(--muted); margin-top:2px; }
+/* User wrap: border + layered 3D baseline then stronger on hover */
+.user-wrap { position:relative; display:flex; align-items:center; gap:10px; }
+.user-btn {
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:6px 10px;
+  border-radius:999px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.01), rgba(0,0,0,0.03));
+  border: 1px solid rgba(255,255,255,0.04); /* visible border before hover */
+  box-shadow: 0 8px 22px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.01); /* layered depth */
+  transition: transform var(--transition-fast) ease, box-shadow var(--transition-fast) ease, border-color var(--transition-fast) ease;
+}
 
-/* Dropdowns / menus */
+/* Avatar */
+.avatar { width:44px; height:44px; border-radius:999px; overflow:hidden; display:grid; place-items:center; border: 1px solid rgba(255,255,255,0.03); background: linear-gradient(135deg, rgba(255,255,255,0.02), rgba(0,0,0,0.02)); }
+.avatar img { width:100%; height:100%; object-fit:cover; display:block; }
+
+/* User text */
+.user-info { min-width:150px; max-width:320px; display:flex; flex-direction:column; align-items:flex-start; text-align:left; }
+.user-name { font-weight:800; font-size:14px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.user-role { font-size:12px; color:var(--muted); margin-top:2px; }
+
+/* Dropdowns */
 .dropdown-menu {
   position:absolute;
   right:0;
-  top:56px;
-  width:360px;
-  max-height:360px;
+  top:60px;
+  width:340px;
+  max-height:420px;
   background: var(--card-bg);
   border-radius:12px;
-  box-shadow: var(--shadow-deep);
+  box-shadow: 0 18px 48px rgba(0,0,0,0.6);
   border: 1px solid rgba(255,255,255,0.03);
   overflow:hidden;
   opacity:0;
   visibility:hidden;
   transform: translateY(-6px);
-  transition: all .16s cubic-bezier(.2,.9,.2,1);
+  transition: all .14s cubic-bezier(.2,.9,.2,1);
   z-index: 1100;
   padding:0;
 }
 .dropdown-menu.open { opacity:1; visibility:visible; transform: translateY(0); }
 
-/* Dropdown header */
-.dropdown-header { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid rgba(255,255,255,0.03); }
-.dropdown-actions { display:flex; gap:8px; align-items:center; }
+/* Dropdown interior */
+.dropdown-header { display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border-bottom:1px solid rgba(255,255,255,0.02); color:var(--muted); }
+.dropdown-list { overflow:auto; max-height:360px; padding:6px 0; }
 
-/* Notification list */
-.dropdown-list { overflow:auto; max-height:400px; }
-.notif-item { display:flex; gap:12px; padding:12px 14px; align-items:flex-start; border-bottom:1px solid rgba(255,255,255,0.02); color:inherit; transition: all .18s ease; }
-.notif-item:hover { transform: translateX(6px); background: linear-gradient(180deg, rgba(149,214,164,0.02), rgba(6,18,15,0.02)); }
-.notif-icon { width:44px; height:44px; border-radius:10px; display:grid; place-items:center; background:linear-gradient(135deg, rgba(47,122,74,0.06), rgba(149,214,164,0.02)); border:1px solid rgba(255,255,255,0.02); font-size:18px; }
-.notif-body { flex:1; }
-.notif-row { display:flex; justify-content:space-between; gap:8px; align-items:center; }
-.notif-title { font-weight:900; color:var(--text); }
-.notif-time { font-size:12px; color:var(--muted); }
-.notif-sub { font-size:13px; color:var(--muted); margin-top:6px; }
-.notif-highlight { color:var(--text); font-weight:800; }
+/* Notification item styling */
+.notif-item { display:flex; gap:12px; padding:12px 14px; align-items:flex-start; border-bottom:1px solid rgba(255,255,255,0.01); color:inherit; transition: all .12s ease; }
+.notif-icon { width:44px; height:44px; border-radius:10px; display:grid; place-items:center; background: linear-gradient(135deg, rgba(255,255,255,0.01), rgba(0,0,0,0.02)); border:1px solid rgba(255,255,255,0.02); font-size:18px; color:var(--muted); }
+.notif-title { font-weight:700; color:var(--text); }
+.notif-sub, .notif-time { color:var(--muted); font-size:13px; }
 
-/* empty state */
-.notif-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:28px; color:var(--muted); gap:8px; }
+/* Hover/active intensification (3D effect increases) */
+.btn:hover, .user-btn:hover, .icon-btn:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 26px 64px rgba(0,0,0,0.7), 0 8px 22px rgba(0,0,0,0.45);
+  border-color: rgba(255,169,77,0.12);
+}
+.btn:hover i, .icon-btn:hover i { color: var(--accent); }
 
-/* User dropdown */
-.user-menu { top:56px; right:0; width:220px; padding:10px; background:var(--card-bg); }
-.dropdown-link { display:flex; align-items:center; gap:10px; padding:10px; text-decoration:none; color:var(--text); font-weight:800; border-radius:8px; }
-.dropdown-link:hover { background: linear-gradient(180deg, rgba(149,214,164,0.02), rgba(6,18,15,0.02)); color:var(--accent-2); transform: translateX(4px); }
-.dropdown-divider { height:1px; background: rgba(255,255,255,0.03); margin:6px 0; }
+/* Focus styles for keyboard */
+.btn:focus, .user-btn:focus {
+  outline: 3px solid rgba(255,169,77,0.08);
+  outline-offset: 3px;
+}
 
+/* small responsive tweaks */
 @media (max-width: 920px) {
-  .user-info { min-width:140px; }
-  .dropdown-menu { right:8px; left:auto; width: calc(100vw - 32px); max-width: 420px; }
   .nav-row { padding:8px 12px; gap:12px; }
+  .user-info { min-width:120px; }
+  .dropdown-menu { right:8px; left:auto; width: calc(100vw - 32px); max-width:420px; }
 }
 @media (max-width: 560px) {
-  .nav-row { padding:8px 10px; gap:8px; }
-  .title-sub { display:none; } 
+  .title-sub { display:none; }
   .notif-badge { display:none; }
+  .user-info { display:none; } /* conserve space */
 }
-
-@keyframes modal-pop { from { transform: translateY(8px) scale(.992); opacity: 0 } to { transform: translateY(0) scale(1); opacity: 1 } }
 </style>
 
+<!-- JS: notifications + user menu toggle (kept lean) -->
 <script>
 (function(){
   const notifToggle = document.getElementById('notif-toggle');
@@ -231,27 +267,12 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
   const userToggle = document.getElementById('user-toggle');
   const userMenu = document.getElementById('user-menu');
 
-  function openMenu(el, toggleEl) {
-    el.classList.add('open');
-    el.setAttribute('aria-hidden','false');
-    if (toggleEl) toggleEl.setAttribute('aria-expanded','true');
-  }
-  function closeMenu(el, toggleEl) {
-    el.classList.remove('open');
-    el.setAttribute('aria-hidden','true');
-    if (toggleEl) toggleEl.setAttribute('aria-expanded','false');
-  }
-  function toggleMenu(el, toggleEl) {
-    const isOpen = el.classList.contains('open');
-    if (isOpen) closeMenu(el, toggleEl); else openMenu(el, toggleEl);
-  }
+  function openMenu(el, toggleEl){ el.classList.add('open'); el.setAttribute('aria-hidden','false'); if(toggleEl) toggleEl.setAttribute('aria-expanded','true'); }
+  function closeMenu(el, toggleEl){ el.classList.remove('open'); el.setAttribute('aria-hidden','true'); if(toggleEl) toggleEl.setAttribute('aria-expanded','false'); }
+  function toggleMenu(el, toggleEl){ el.classList.contains('open') ? closeMenu(el,toggleEl) : openMenu(el,toggleEl); }
 
   if (notifToggle && notifMenu) {
-    notifToggle.addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggleMenu(notifMenu, notifToggle);
-      if (userMenu && userMenu.classList.contains('open')) closeMenu(userMenu, userToggle);
-    });
+    notifToggle.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(notifMenu, notifToggle); if(userMenu && userMenu.classList.contains('open')) closeMenu(userMenu, userToggle); });
   }
 
   if (clearBtn) {
@@ -264,41 +285,28 @@ function esc($s) { return htmlspecialchars((string)$s, ENT_QUOTES | ENT_SUBSTITU
     });
   }
 
-  function updateBadge(n) {
-    if (!notifBadge) return;
-    if (n <= 0) {
-      notifBadge.style.display = 'none';
-      notifBadge.textContent = '0';
-    } else {
-      notifBadge.style.display = 'inline-block';
-      notifBadge.textContent = n;
-    }
-  }
-
   if (userToggle && userMenu) {
-    userToggle.addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggleMenu(userMenu, userToggle);
-      if (notifMenu && notifMenu.classList.contains('open')) closeMenu(notifMenu, notifToggle);
-    });
+    userToggle.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(userMenu, userToggle); if(notifMenu && notifMenu.classList.contains('open')) closeMenu(notifMenu, notifToggle); });
   }
 
   document.addEventListener('click', (e) => {
     if (notifMenu && !notifMenu.contains(e.target) && notifToggle && !notifToggle.contains(e.target)) closeMenu(notifMenu, notifToggle);
     if (userMenu && !userMenu.contains(e.target) && userToggle && !userToggle.contains(e.target)) closeMenu(userMenu, userToggle);
   });
+
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      if (notifMenu) closeMenu(notifMenu, notifToggle);
-      if (userMenu) closeMenu(userMenu, userToggle);
-    }
+    if (e.key === 'Escape') { if (notifMenu) closeMenu(notifMenu, notifToggle); if (userMenu) closeMenu(userMenu, userToggle); }
   });
+
+  function updateBadge(n) {
+    if (!notifBadge) return;
+    if (n <= 0) { notifBadge.style.display = 'none'; notifBadge.textContent = '0'; } else { notifBadge.style.display = 'inline-block'; notifBadge.textContent = n; }
+  }
 
   (function init() {
     const items = notifList ? notifList.querySelectorAll('.notif-item') : [];
     updateBadge(items.length);
     if ((!items || items.length === 0) && notifEmpty) notifEmpty.setAttribute('aria-hidden','false');
   })();
-
 })();
 </script>
