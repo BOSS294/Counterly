@@ -1,5 +1,5 @@
 <?php
-// upload_ui.php - client UI. Uses PDF.js in-browser text extraction and posts to upload_api.php
+// upload_ui.php - client UI (CSV-only variant). Uses the same backend upload_api.php
 session_start();
 if (!isset($_SESSION['user_id'])) {
     http_response_code(401);
@@ -14,421 +14,376 @@ $csrf = $_SESSION['csrf_token'];
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Upload Bank Statement — UI</title>
+<title>Upload CSV Bank Statement — UI</title>
 
-<!-- PDF.js (main script) -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.js"></script>
+<!-- load project-wide base styles first (you asked to place this after base.css) -->
+<link rel="stylesheet" href="/assets/css/base.css" />
 
+<!-- Page-specific styles only (no :root or body overrides) -->
 <style>
-:root{
-  --bg:#0b0b0b; --card:#0f1720; --text:#e7e7e7; --muted:rgba(231,231,231,0.56);
-  --accent1:#ffa94d; --accent2:#7c3aed;
+/* Full-viewport layout */
+html, body { height: 100%; margin: 0; padding: 0; }
+.page-shell { min-height:100vh; display:flex; flex-direction:column; gap:18px; padding:24px; box-sizing:border-box; }
+
+/* Large, wide layout */
+.uploader-viewport { display:flex; gap:20px; align-items:stretch; width:100%; height:calc(100vh - 80px); }
+.left-panel { flex:1 1 70%; display:flex; flex-direction:column; gap:16px; min-width:0; }
+.right-panel { width:420px; max-width:38%; display:flex; flex-direction:column; gap:12px; }
+
+/* Card visual */
+.card { background-color: rgba(255,255,255,0.02); border-radius:12px; padding:18px; box-shadow: 0 6px 20px rgba(2,6,23,0.6); border:1px solid rgba(255,255,255,0.03); height:100%; overflow:auto; }
+
+/* Header */
+.header { display:flex; align-items:center; gap:12px; }
+.header h1 { margin:0; font-size:22px; letter-spacing:0.2px; }
+.header .muted { color:rgba(255,255,255,0.6); font-size:13px; margin-left:auto; }
+
+/* Dropzone */
+.dropzone { border:2px dashed rgba(255,255,255,0.06); border-radius:12px; padding:28px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; cursor:pointer; transition: all 180ms ease; height:100%; text-align:center; }
+.dropzone .icon { font-size:56px; opacity:0.95; transform:translateY(0); transition: transform 220ms ease; }
+.dropzone .title { font-weight:700; font-size:18px; }
+.dropzone .sub { color:rgba(255,255,255,0.65); font-size:13px; max-width:680px; }
+.dropzone:hover { border-color: rgba(124,58,237,0.9); transform: translateY(-2px); box-shadow: 0 12px 30px rgba(124,58,237,0.06); }
+.dropzone.dragover { border-color: rgba(124,58,237,0.95); background: rgba(124,58,237,0.02); }
+
+/* Controls row */
+.controls { display:flex; gap:10px; align-items:center; margin-top:12px; flex-wrap:wrap; }
+.btn { padding:10px 14px; border-radius:10px; border:0; cursor:pointer; font-weight:700; transition: transform 120ms ease, box-shadow 120ms ease; }
+.btn-primary { background:linear-gradient(90deg, rgba(255,169,77,0.12), rgba(124,58,237,0.08)); color:var(--text, #fff); border:1px solid rgba(255,169,77,0.06); }
+.btn-ghost { background:transparent; border:1px solid rgba(255,255,255,0.04); color:rgba(255,255,255,0.9); }
+.btn:active { transform: translateY(1px); }
+
+/* File list (compact) */
+.file-list { display:flex; flex-direction:column; gap:10px; }
+.file-row { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px; border-radius:8px; background:rgba(255,255,255,0.01); border:1px solid rgba(255,255,255,0.02); }
+.file-meta { min-width:0; overflow:hidden; }
+.file-meta .name { font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:420px; }
+.file-meta .size { color:rgba(255,255,255,0.55); font-size:13px; }
+
+/* progress */
+.progress { width:220px; height:10px; background:rgba(255,255,255,0.03); border-radius:999px; overflow:hidden; box-shadow: inset 0 -2px 6px rgba(0,0,0,0.35); }
+.progress > i { display:block; height:100%; width:0%; background: linear-gradient(90deg, rgba(255,169,77,0.95), rgba(124,58,237,0.95)); transition: width 420ms cubic-bezier(.2,.9,.2,1); }
+
+/* status small */
+.small { font-size:13px; color:rgba(255,255,255,0.7); }
+.steps-log { font-size:13px; color:rgba(255,255,255,0.6); }
+
+/* right column: instructions & summary */
+.summary { display:flex; flex-direction:column; gap:12px; }
+.summary .big { font-size:18px; font-weight:800; }
+.summary .muted { color:rgba(255,255,255,0.6); font-size:13px; }
+
+/* counterparty count */
+.cp-count { display:flex; gap:12px; align-items:center; justify-content:space-between; padding:12px; border-radius:8px; background: rgba(255,255,255,0.01); border:1px solid rgba(255,255,255,0.02); }
+.cp-count .label { color:rgba(255,255,255,0.7); font-size:13px; }
+.cp-count .value { font-size:20px; font-weight:800; }
+
+/* footer hint and convert link */
+.hint { color:rgba(255,255,255,0.6); font-size:13px; }
+.convert-link { color:rgba(255,169,77,1); font-weight:700; text-decoration:underline; cursor:pointer; }
+
+/* modal small */
+.modal { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.6); z-index:80; }
+.modal.show { display:flex; }
+.modal .mcard { padding:18px; border-radius:12px; background:rgba(255,255,255,0.03); width:480px; max-width:94%; }
+
+/* responsive tweaks */
+@media (max-width:980px) {
+  .uploader-viewport { flex-direction:column; height:auto; }
+  .right-panel { width:100%; max-width:100%; }
 }
-*{box-sizing:border-box}
-body{margin:0;font-family:Inter,system-ui,Arial;background:var(--bg);color:var(--text);padding:20px}
-.container{max-width:1200px;margin:0 auto}
-.header{display:flex;align-items:center;gap:12px;margin-bottom:14px}
-.header h1{font-size:20px;margin:0}
-.grid{display:grid;grid-template-columns:1fr 420px;gap:20px}
-@media(max-width:980px){ .grid{ grid-template-columns:1fr } }
-.card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:18px;border-radius:12px;border:1px solid rgba(255,255,255,0.03)}
-.instructions p{color:var(--muted);margin:6px 0}
-.dropzone{border:2px dashed rgba(255,255,255,0.04);padding:20px;border-radius:10px;display:flex;flex-direction:column;gap:10px;align-items:center;justify-content:center;cursor:pointer}
-.dropzone.dragover{border-color:rgba(255,169,77,0.85);background:rgba(255,169,77,0.02)}
-.controls{display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap}
-.file-list{margin-top:12px;display:flex;flex-direction:column;gap:10px}
-.file-row{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:10px;border-radius:10px;background:rgba(255,255,255,0.02)}
-.file-progress{width:220px;height:10px;background:rgba(255,255,255,0.02);border-radius:6px;overflow:hidden}
-.file-progress > i{display:block;height:100%;width:0%;background:linear-gradient(90deg,var(--accent1),var(--accent2))}
-.file-status{font-size:13px;color:var(--muted);min-width:140px;text-align:right}
-.btn{padding:8px 12px;border-radius:8px;cursor:pointer;border:0;font-weight:800}
-.btn-primary{background:linear-gradient(90deg, rgba(255,169,77,0.12), rgba(124,58,237,0.08));border:1px solid rgba(255,169,77,0.06);color:var(--text)}
-.btn-ghost{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--muted)}
-.small{font-size:13px;color:var(--muted)}
-.flex-row{display:flex;gap:8px;align-items:center}
-.select, input[type="text"]{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--text);padding:8px;border-radius:8px}
-.counterparty-item{padding:8px;border-radius:8px;background:rgba(255,255,255,0.01);margin-bottom:8px}
-.modal{position:fixed;left:0;top:0;right:0;bottom:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);z-index:60}
-.modal.show{display:flex}
-.modal .mcard{width:420px;max-width:95%;background:var(--card);padding:16px;border-radius:12px}
-.hint{font-size:12px;color:var(--muted);margin-top:8px}
 </style>
 </head>
 <body>
-<div class="container">
+<div class="page-shell">
   <div class="header">
-    <h1>Upload Bank Statements</h1>
-    <div class="small" style="margin-left:auto">Logged in • secure upload</div>
+    <h1>CSV Bank Statement Uploader</h1>
+    <div class="muted">CSV-only • server will parse and insert</div>
   </div>
 
-  <div class="grid">
-    <div class="card instructions">
-      <h3>How it works</h3>
-      <p class="small">This UI can extract text in the browser via <strong>pdf.js</strong> and send the extracted text to the server for parsing. If you upload a PDF without sending extracted text, the server will only store the PDF (no server-side PDF→text extraction is performed).</p>
-      <p class="small"><strong>Privacy:</strong> extracted text and files are sent only to your account; files are stored with SHA256 checksums to avoid duplicate parsing.</p>
-      <div style="margin-top:12px">
-        <strong>Tips</strong>
-        <ul class="small">
-          <li>HDFC provides `.txt` statements — uploading the `.txt` directly is the most reliable.</li>
-          <li>Max 20 MB per file.</li>
-        </ul>
+  <div class="uploader-viewport">
+    <div class="left-panel">
+      <div class="card" style="display:flex;flex-direction:column;gap:14px;">
+        <div style="display:flex;align-items:center;gap:16px;">
+          <div style="font-weight:800;font-size:18px">Upload your converted CSV</div>
+          <div class="small" style="margin-left:auto">Max file: 20 MB</div>
+        </div>
+
+        <div id="dropzone" class="dropzone" tabindex="0" aria-label="Drop CSV file here">
+          <div class="icon">📥</div>
+          <div class="title">Drop CSV file here</div>
+          <div class="sub">Drop a CSV file (the one produced by the converter) or click to browse. The page accepts only <strong>.csv</strong> files. After upload the server will parse and insert transactions.</div>
+          <div class="sub hint">If you have a <code>.txt</code> HDFC statement, first convert it to CSV using <a href="convert.html" class="convert-link">convert.html</a>.</div>
+        </div>
+
+        <div class="controls">
+          <div style="display:flex;gap:8px;align-items:center;">
+            <label class="small"><input id="optNullSide" type="checkbox" /> Upload with NULL for non-used side</label>
+          </div>
+
+          <div style="flex:1"></div>
+          <select id="accountSelect" class="select small" style="min-width:220px"><option>Loading accounts…</option></select>
+          <button id="startUpload" class="btn btn-primary">Start Parse</button>
+          <button id="clearFiles" class="btn btn-ghost">Clear</button>
+        </div>
+
+        <div id="fileList" class="file-list" aria-live="polite"></div>
+        <div id="stepsLog" class="steps-log small">No CSV uploaded yet.</div>
       </div>
     </div>
 
-    <div class="card">
-      <div id="dropzone" class="dropzone" tabindex="0">
-        <div style="font-size:34px;opacity:0.9">📄</div>
-        <div id="dropText">Drag & drop PDF or TXT files here or click to browse</div>
-        <div class="small">Multiple files allowed — processed one-by-one.</div>
-      </div>
-
-      <div class="controls">
-        <label class="small"><input type="checkbox" id="useClientExtract" checked> Extract text in browser (pdf.js)</label>
-        <label class="small"><input type="checkbox" id="compressPdf"> Compress on server</label>
-
-        <label style="margin-left:8px" class="small">Format:
-          <select id="statementFormat" class="select small">
-            <option value="auto">Auto (detect by extension)</option>
-            <option value="pdf">PDF</option>
-            <option value="txt">TXT</option>
-          </select>
-        </label>
-
-        <div style="flex:1"></div>
-        <select id="accountSelect" class="select small"><option>Loading accounts…</option></select>
-        <button id="startUpload" class="btn btn-primary">Start</button>
-        <button id="clearFiles" class="btn btn-ghost">Clear</button>
-      </div>
-
-      <div class="file-list" id="fileList"></div>
-      <div class="steps-log small" id="stepsLog">No uploads yet.</div>
-
-      <hr style="margin:12px 0;border-color:rgba(255,255,255,0.03)" />
-      <div style="display:flex;gap:8px;align-items:center;justify-content:space-between">
-        <div>
-          <strong>Groups</strong>
-          <div class="hint">Auto-created when a counterparty appears ≥ 2 times</div>
+    <div class="right-panel">
+      <div class="card summary">
+        <div class="big">Quick instructions</div>
+        <div class="muted">
+          <ol style="padding-left:16px;margin:6px 0 0 0;">
+            <li><strong>Convert .txt → .csv</strong> if needed using <a href="convert.html" class="convert-link">convert.html</a>.</li>
+            <li>Drag & drop or click to browse and select a single <code>.csv</code> file.</li>
+            <li>Choose account (optional).</li>
+            <li>Click <strong>Start Parse</strong> — the server will process and insert transactions. Use the Verify report to inspect parsing issues.</li>
+          </ol>
         </div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <button id="refreshGroups" class="btn btn-ghost">Refresh</button>
-          <button id="addAccountBtn" class="btn btn-ghost">Add account</button>
+
+        <div class="cp-count" style="margin-top:6px;">
+          <div>
+            <div class="label">Auto-created counterparties (count)</div>
+            <div class="small hint">This is the total number of counterparties associated with your account.</div>
+          </div>
+          <div class="value" id="cpCount">—</div>
+        </div>
+
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+          <button id="refreshGroups" class="btn btn-ghost">Refresh Count</button>
+          <div style="flex:1"></div>
+          <div class="hint">Only counts are shown here. View the Groups page for details.</div>
         </div>
       </div>
-      <div id="counterpartyList" style="margin-top:10px"></div>
+
+      <div class="card">
+        <div style="font-weight:800">Status</div>
+        <div id="statusBox" class="small" style="margin-top:8px">Idle</div>
+      </div>
     </div>
   </div>
 </div>
 
-<!-- modal for add account -->
+<!-- Modal (unused currently but kept for future micro interactions) -->
 <div id="modal" class="modal" aria-hidden="true">
   <div class="mcard">
-    <h3 style="margin:0 0 8px 0">Add Bank Account</h3>
-    <div style="display:flex;flex-direction:column;gap:8px">
-      <input id="bankName" class="select" placeholder="Bank name (e.g. HDFC Bank)" />
-      <input id="acctMask" class="select" placeholder="Account masked (e.g. ****4404) (optional)" />
-      <input id="ifsc" class="select" placeholder="IFSC (optional)" />
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
-        <button id="closeModal" class="btn btn-ghost">Close</button>
-        <button id="createAccount" class="btn btn-primary">Create</button>
-      </div>
+    <div style="font-weight:800;margin-bottom:8px">Notice</div>
+    <div class="small" id="modalText"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:12px">
+      <button id="closeModal" class="btn btn-ghost">Close</button>
     </div>
   </div>
 </div>
 
 <script>
-/* Configuration */
+/* ---------- Config ---------- */
 const API_URL = '/Assets/Website/Api/upload_api.php';
 const CSRF = <?php echo json_encode($csrf); ?>;
 const MAX_BYTES = 20 * 1024 * 1024;
 
-/* DOM */
+/* ---------- DOM ---------- */
 const dropzone = document.getElementById('dropzone');
-const dropText = document.getElementById('dropText');
 const fileListEl = document.getElementById('fileList');
 const startBtn = document.getElementById('startUpload');
 const clearBtn = document.getElementById('clearFiles');
 const stepsLog = document.getElementById('stepsLog');
-const compressCheckbox = document.getElementById('compressPdf');
-const useClientExtract = document.getElementById('useClientExtract');
-const statementFormat = document.getElementById('statementFormat');
 const accountSelect = document.getElementById('accountSelect');
-const addAccountBtn = document.getElementById('addAccountBtn');
-const modal = document.getElementById('modal');
-const closeModal = document.getElementById('closeModal');
-const createAccount = document.getElementById('createAccount');
-const bankName = document.getElementById('bankName');
-const acctMask = document.getElementById('acctMask');
-const ifsc = document.getElementById('ifsc');
 const refreshGroups = document.getElementById('refreshGroups');
-const counterpartyList = document.getElementById('counterpartyList');
+const cpCountEl = document.getElementById('cpCount');
+const statusBox = document.getElementById('statusBox');
 
-let filesQueue = [];
+let queuedFile = null;
+let optNullSide = document.getElementById('optNullSide');
 
-/* pdf.js worker - ensure worker path matches version */
-if (window['pdfjsLib']) {
-  window['pdfjsLib'].GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js';
-}
-
-/* Utilities */
+/* ---------- Utilities ---------- */
 function setSteps(msg){ stepsLog.textContent = msg; }
-function escapeHtml(s){ if(!s) return ''; return String(s).replace(/[&<>"']/g, (m)=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]) ); }
-function renderQueue(){
+function setStatus(msg){ statusBox.textContent = msg; }
+function esc(s){ return String(s||''); }
+
+/* ---------- Render queue (single-file UX) ---------- */
+function renderQueue() {
   fileListEl.innerHTML = '';
-  if(filesQueue.length === 0){ fileListEl.style.display = 'none'; return; }
+  if (!queuedFile) { fileListEl.style.display = 'none'; return; }
   fileListEl.style.display = 'flex';
-  filesQueue.forEach((fObj, idx) =>{
-    const row = document.createElement('div'); row.className='file-row';
-    row.innerHTML = `
-      <div style="display:flex; gap:12px; align-items:center; min-width:0;">
-        <div style="min-width:0;">
-          <div style="font-weight:800;">${escapeHtml(fObj.file.name)}</div>
-          <div style="color:var(--muted); font-size:13px;">${(fObj.file.size/1024/1024).toFixed(2)} MB • ${fObj.kind}</div>
-        </div>
+  const f = queuedFile;
+  const row = document.createElement('div');
+  row.className = 'file-row';
+  row.innerHTML = `
+    <div style="display:flex;gap:12px;align-items:center;min-width:0">
+      <div class="file-meta">
+        <div class="name">${esc(f.name)}</div>
+        <div class="size small">${(f.size/1024/1024).toFixed(2)} MB • CSV</div>
       </div>
-      <div style="display:flex; gap:12px; align-items:center;">
-        <div class="file-progress" id="prog${idx}"><i></i></div>
-        <div class="file-status" id="status${idx}">Queued</div>
-      </div>
-    `;
-    fileListEl.appendChild(row);
-  });
+    </div>
+    <div style="display:flex;gap:12px;align-items:center">
+      <div class="progress"><i id="progBar" style="width:0%"></i></div>
+      <div class="small" id="fileStatus">Queued</div>
+    </div>
+  `;
+  fileListEl.appendChild(row);
 }
 
-/* File handling - accept both PDF and TXT by default; behavior influenced by statementFormat */
+/* ---------- File handling (CSV only) ---------- */
 function fileKindFromName(file){
   const name = (file.name || '').toLowerCase();
-  if (name.endsWith('.txt') || file.type === 'text/plain') return 'txt';
-  if (name.endsWith('.pdf') || file.type === 'application/pdf') return 'pdf';
+  if (name.endsWith('.csv') || file.type === 'text/csv' || file.type === 'application/vnd.ms-excel') return 'csv';
   return 'other';
 }
 
 function handleFiles(list){
-  for(const f of list){
-    const kind = fileKindFromName(f);
-    // If user forced a format, respect it (for hinting); but still allow main types.
-    if (statementFormat.value === 'pdf' && kind !== 'pdf') { alert('PDF format selected — only PDF files allowed: ' + f.name); continue; }
-    if (statementFormat.value === 'txt' && kind !== 'txt') { alert('TXT format selected — only .txt files allowed: ' + f.name); continue; }
-    if (kind !== 'pdf' && kind !== 'txt') { alert('Only PDF or TXT files allowed: ' + f.name); continue; }
-    if(f.size > MAX_BYTES){ alert('File too large (max 20MB): ' + f.name); continue; }
-    filesQueue.push({ file: f, state: 'queued', kind: kind });
-  }
+  if (!list || list.length === 0) return;
+  const f = list[0]; // accept only first file
+  const kind = fileKindFromName(f);
+  if (kind !== 'csv') { alert('Only CSV files are accepted. Please provide a .csv file.'); return; }
+  if (f.size > MAX_BYTES) { alert('File too large (max 20 MB).'); return; }
+  queuedFile = f;
   renderQueue();
+  setSteps('File ready: ' + f.name);
+  setStatus('Ready to upload CSV.');
 }
 
-/* drag/drop UI */
-['dragenter','dragover'].forEach(evt=> dropzone.addEventListener(evt, (e)=>{ e.preventDefault(); dropzone.classList.add('dragover'); }));
-['dragleave','drop'].forEach(evt=> dropzone.addEventListener(evt, (e)=>{ e.preventDefault(); dropzone.classList.remove('dragover'); }));
-dropzone.addEventListener('drop', (e)=>{ handleFiles(e.dataTransfer.files); });
-dropzone.addEventListener('click', ()=>{ const ip = document.createElement('input'); ip.type='file'; ip.accept='.pdf,.txt,application/pdf,text/plain'; ip.multiple=true; ip.onchange = ()=> handleFiles(ip.files); ip.click(); });
-dropzone.addEventListener('keydown', (e)=>{ if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); dropzone.click(); } });
+/* Drag/drop events */
+['dragenter','dragover'].forEach(evt => {
+  dropzone.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); dropzone.classList.add('dragover'); });
+});
+['dragleave','drop'].forEach(evt => {
+  dropzone.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); dropzone.classList.remove('dragover'); });
+});
+dropzone.addEventListener('drop', (e) => {
+  const dt = e.dataTransfer;
+  handleFiles(dt.files);
+});
+dropzone.addEventListener('click', () => {
+  const ip = document.createElement('input');
+  ip.type = 'file';
+  ip.accept = '.csv,text/csv,application/csv';
+  ip.onchange = () => handleFiles(ip.files);
+  ip.click();
+});
+dropzone.addEventListener('keydown', (e)=> { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); dropzone.click(); } });
 
-clearBtn.addEventListener('click', ()=>{ filesQueue = []; renderQueue(); setSteps('Cleared.'); });
-
-startBtn.addEventListener('click', async ()=> {
-  if(filesQueue.length === 0) return alert('No files selected');
-  if(!confirm('Start upload and parse now?')) return;
-  startBtn.disabled = true; clearBtn.disabled = true; setSteps('Starting uploads...');
-  const accountId = accountSelect.value ? parseInt(accountSelect.value) : null;
-  for(let i=0;i<filesQueue.length;i++){
-    const item = filesQueue[i];
-    const stEl = document.getElementById('status'+i);
-    if(stEl) stEl.textContent = 'Processing...';
-    await processFile(item.file, i, accountId, item.kind);
-  }
-  setSteps('All uploads finished. Check Statements page.');
-  startBtn.disabled = false; clearBtn.disabled = false;
+clearBtn.addEventListener('click', () => {
+  queuedFile = null;
+  renderQueue();
+  setSteps('Cleared.');
+  setStatus('Idle');
 });
 
-/* PDF.js extraction (client) */
-async function extractPdfText(file){
-  if (!window['pdfjsLib']) throw new Error('pdfjs not loaded');
-  const pdfjsLib = window['pdfjsLib'];
-  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js';
-  const arrayBuffer = await file.arrayBuffer();
-  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer, nativeImageDecoderSupport: 'none' });
-  const pdf = await loadingTask.promise;
-  let text = '';
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    text += content.items.map(item => item.str).join(' ') + '\n';
-  }
-  return text;
-}
+/* ---------- Upload & parse CSV ---------- */
+async function startParse() {
+  if (!queuedFile) return alert('Please select a CSV file first.');
+  startBtn.disabled = true;
+  clearBtn.disabled = true;
+  setSteps('Uploading CSV...');
+  setStatus('Uploading...');
 
-/* processFile: txt files are uploaded to upload_text; pdf files are extracted client-side if enabled or uploaded as binary otherwise */
-async function processFile(file, idx, accountId, kind){
-  const statusEl = document.getElementById('status'+idx);
-  const progEl = document.querySelector('#prog'+idx+' i');
+  const statusTextEl = document.getElementById('fileStatus');
+  const progBar = document.getElementById('progBar');
+
   try {
-    // TXT file -> upload as text (server will parse)
-    if (kind === 'txt') {
-      statusEl.textContent = 'Reading .txt file...';
-      const txt = await file.text();
-      if (!txt || txt.trim().length < 10) { statusEl.textContent = 'Empty text file'; return; }
-      statusEl.textContent = 'Uploading text...';
-      progEl.style.width = '20%';
-      const fd = new FormData();
-      fd.append('pdf_text', txt);
-      fd.append('filename', file.name);
-      fd.append('csrf_token', CSRF);
-      if (accountId) fd.append('account_id', accountId);
-      if (compressCheckbox.checked) fd.append('compress', '1');
-      const res = await fetch(API_URL + '?action=upload_text', { method: 'POST', credentials: 'include', body: fd });
-      const j = await res.json();
-      if (j.success) {
-        progEl.style.width = '100%';
-        statusEl.textContent = 'Uploaded (text) — Parsing';
-        await pollParseStatus(j.statement_id, idx);
-      } else {
-        statusEl.textContent = 'Server error: ' + (j.error||'unknown');
-      }
-      return;
-    }
+    const fd = new FormData();
+    fd.append('csv_file', queuedFile);
+    fd.append('filename', queuedFile.name);
+    fd.append('csrf_token', CSRF);
+    if (accountSelect.value) fd.append('account_id', accountSelect.value);
+    // pass option whether to prefer NULL for non-used side (server uses parse_csv_and_insert to interpret)
+    if (optNullSide && optNullSide.checked) fd.append('null_for_other_side', '1');
 
-    // PDF file -> try client extraction if enabled
-    if (kind === 'pdf') {
-      if (useClientExtract.checked) {
-        statusEl.textContent = 'Extracting text (browser)...';
-        let pdfText = '';
-        try {
-          pdfText = await extractPdfText(file);
-        } catch(e) {
-          console.warn('Client extraction failed:', e);
+    // Use XHR so we can display upload progress
+    await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', API_URL + '?action=upload_csv', true);
+      xhr.withCredentials = true;
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const pct = Math.round((e.loaded / e.total) * 100);
+          progBar.style.width = pct + '%';
+          if (statusTextEl) statusTextEl.textContent = 'Uploading: ' + pct + '%';
+          setStatus('Uploading: ' + pct + '%');
         }
-        if (pdfText && pdfText.trim().length > 30) {
-          // Send extracted text to upload_text; allow server to attach to a previously-uploaded PDF by statement_id if desired
-          statusEl.textContent = 'Uploading extracted text...';
-          progEl.style.width = '20%';
-          const fd = new FormData();
-          fd.append('pdf_text', pdfText);
-          fd.append('filename', file.name);
-          fd.append('csrf_token', CSRF);
-          if (accountId) fd.append('account_id', accountId);
-          if (compressCheckbox.checked) fd.append('compress', '1');
-          const res = await fetch(API_URL + '?action=upload_text', { method: 'POST', credentials: 'include', body: fd });
-          const j = await res.json();
-          if (j.success) {
-            progEl.style.width = '100%';
-            statusEl.textContent = 'Uploaded (text) — Parsing';
-            await pollParseStatus(j.statement_id, idx);
-            return;
+      };
+      xhr.onload = () => {
+        let j = null;
+        try { j = JSON.parse(xhr.responseText); } catch (e) { j = null; }
+        if (xhr.status >= 200 && xhr.status < 300 && j && j.success) {
+          progBar.style.width = '100%';
+          if (statusTextEl) statusTextEl.textContent = 'Uploaded. Parsing...';
+          setStatus('Uploaded. Parsing...');
+          // If server processed synchronously it returns parse_status and inserted_rows; otherwise poll.
+          if (j.parse_status === 'parsed' || j.parse_status === 'error') {
+            // immediate result
+            resolve(j);
+          } else if (j.statement_id) {
+            // poll for status
+            pollParseStatus(j.statement_id).then(() => resolve(j)).catch(err => reject(err));
           } else {
-            statusEl.textContent = 'Server error: ' + (j.error||'unknown');
-            return;
+            // fallback: try to parse statement id from response or resolve anyway
+            resolve(j || {});
           }
         } else {
-          statusEl.textContent = 'No text extracted, falling back to PDF upload';
+          const errMsg = (j && j.error) ? j.error : ('HTTP ' + xhr.status);
+          reject(new Error('Upload failed: ' + errMsg));
         }
-      }
+      };
+      xhr.onerror = () => { reject(new Error('Network error during upload')); };
+      xhr.send(fd);
+    });
 
-      // fallback: upload PDF binary to server (server will store but will NOT extract text automatically)
-      statusEl.textContent = 'Uploading PDF (will be stored, no server extraction)...';
-      progEl.style.width = '5%';
-      const fd2 = new FormData();
-      fd2.append('statement_pdf', file);
-      fd2.append('csrf_token', CSRF);
-      if (accountId) fd2.append('account_id', accountId);
-      if (compressCheckbox.checked) fd2.append('compress', '1');
+    setSteps('Parsing started on server. Waiting for completion...');
+    setStatus('Parsing...');
 
-      const xhr = new XMLHttpRequest();
-      xhr.open('POST', API_URL + '?action=upload', true);
-      xhr.withCredentials = true;
-      xhr.upload.onprogress = function(e){ if(e.lengthComputable){ const pct = Math.round((e.loaded / e.total) * 100); progEl.style.width = pct + '%'; statusEl.textContent = 'Uploading ' + pct + '%'; } };
-      await new Promise((resolve) => {
-        xhr.onload = async function(){
-          let j = null;
-          try { j = JSON.parse(xhr.responseText); } catch(e){ /* ignore */ }
-          if (xhr.status >=200 && xhr.status < 300 && j && j.success) {
-            statusEl.textContent = 'Uploaded — Stored (no server-side PDF→text extraction).';
-            progEl.style.width = '100%';
-            // If server returned parse_status let's show it; otherwise the client can extract and upload_text referencing statement_id in a follow-up step
-            if (j.parse_status) statusEl.textContent += ' Status: ' + j.parse_status;
-            // NOTE: client can now extract text and call upload_text with statement_id to attach the text and trigger parsing.
-          } else {
-            statusEl.textContent = 'Upload failed: ' + (j && j.error ? j.error : xhr.status);
-          }
-          resolve();
-        };
-        xhr.onerror = function(){ statusEl.textContent = 'Network error'; resolve(); };
-        xhr.send(fd2);
-      });
-
-      return;
-    }
-
-    statusEl.textContent = 'Unsupported file type';
+    // After server parsing completes, refresh counterparty count
+    await new Promise(resolve => setTimeout(resolve, 700));
+    await loadGroups(); // refresh counts
+    setSteps('Parse completed (see status).');
+    setStatus('Done');
   } catch (err) {
-    console.error('processFile error', err);
-    const statusEl = document.getElementById('status'+idx);
-    statusEl.textContent = 'Error: ' + (err.message || 'unknown');
+    console.error(err);
+    setSteps('Error: ' + (err.message || err));
+    setStatus('Error');
+    alert('Upload or parse failed: ' + (err.message || err));
+  } finally {
+    startBtn.disabled = false;
+    clearBtn.disabled = false;
   }
 }
 
-/* Poll parse status */
-function pollParseStatus(statementId, idx){
-  const statusEl = document.getElementById('status'+idx);
-  statusEl.textContent = 'Queued for parsing...';
-  return new Promise((resolve) => {
+/* Poll parse status helper */
+function pollParseStatus(statementId, timeoutMs = 120000) {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
     const iv = setInterval(async () => {
       try {
         const resp = await fetch(API_URL + '?action=status&sid=' + encodeURIComponent(statementId), { credentials: 'include' });
-        if (resp.ok) {
-          const j = await resp.json();
-          if (j.success) {
-            if (j.parse_status === 'parsed') { statusEl.textContent = 'Parsed ✓'; clearInterval(iv); resolve(); }
-            else if (j.parse_status === 'error') { statusEl.textContent = 'Error parsing'; console.warn('parse error', j.error_message); clearInterval(iv); resolve(); }
-            else { statusEl.textContent = (j.parse_status || 'parsing') + '...'; }
-          } else {
-            statusEl.textContent = 'Error: ' + (j.error || 'unknown');
-            clearInterval(iv); resolve();
-          }
-        }
-      } catch(e){
-        // ignore transient network glitches
+        if (!resp.ok) throw new Error('Status check failed');
+        const j = await resp.json();
+        if (!j.success) { clearInterval(iv); return reject(new Error(j.error || 'status error')); }
+        if (j.parse_status === 'parsed') { clearInterval(iv); setSteps('Parsed ✓'); setStatus('Parsed ✓'); resolve(j); return; }
+        if (j.parse_status === 'error') { clearInterval(iv); setSteps('Parse error'); setStatus('Parse error'); resolve(j); return; }
+        // otherwise still parsing
+        setSteps('Parsing on server... (' + (j.parse_status || 'pending') + ')');
+        setStatus('Parsing: ' + (j.parse_status || 'pending'));
+        if (Date.now() - start > timeoutMs) { clearInterval(iv); resolve(j); return; }
+      } catch (e) {
+        // ignore transient errors, but stop after timeout
+        if (Date.now() - start > timeoutMs) { clearInterval(iv); resolve({}); return; }
       }
-    }, 2000);
-    setTimeout(()=>{ clearInterval(iv); resolve(); }, 120000);
+    }, 1800);
   });
 }
 
-/* Accounts & groups */
-addAccountBtn.addEventListener('click', ()=> { modal.classList.add('show'); modal.setAttribute('aria-hidden','false'); bankName.focus(); });
-closeModal.addEventListener('click', ()=> { modal.classList.remove('show'); modal.setAttribute('aria-hidden','true'); });
-
-createAccount.addEventListener('click', async ()=> {
-  const bank = bankName.value.trim();
-  if (!bank) return alert('Enter bank name');
-  createAccount.disabled = true;
-  try {
-    const resp = await fetch(API_URL + '?action=add_account', {
-      method: 'POST',
-      credentials: 'include',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ bank_name: bank, account_number_masked: acctMask.value.trim(), ifsc: ifsc.value.trim() })
-    });
-    const j = await resp.json();
-    if (j.success) {
-      modal.classList.remove('show'); modal.setAttribute('aria-hidden','true');
-      bankName.value=''; acctMask.value=''; ifsc.value='';
-      await loadAccounts();
-      alert('Account created');
-    } else {
-      alert('Failed: ' + (j.error||'unknown'));
-    }
-  } catch (e) { alert('Server error'); }
-  createAccount.disabled = false;
-});
-
+/* ---------- Accounts & Groups (counts-only) ---------- */
 async function loadAccounts(){
-  accountSelect.innerHTML = '<option value="">Loading accounts...</option>';
+  accountSelect.innerHTML = '<option value="">Loading accounts…</option>';
   try {
     const resp = await fetch(API_URL + '?action=list_accounts', { credentials: 'include' });
     const j = await resp.json();
     if (j.success) {
-      const rows = j.accounts || [];
       accountSelect.innerHTML = '<option value="">-- Select account (optional) --</option>';
-      rows.forEach(r => {
+      (j.accounts || []).forEach(r => {
         const text = `${r.bank_name}${r.account_number_masked ? ' · ' + r.account_number_masked : ''}${r.ifsc ? ' · ' + r.ifsc : ''}`;
         const opt = document.createElement('option'); opt.value = r.id; opt.textContent = text;
         accountSelect.appendChild(opt);
@@ -441,265 +396,33 @@ async function loadAccounts(){
   }
 }
 
-refreshGroups.addEventListener('click', loadGroups);
 async function loadGroups(){
-  counterpartyList.innerHTML = 'Loading...';
+  cpCountEl.textContent = '…';
   try {
     const resp = await fetch(API_URL + '?action=get_groups', { credentials: 'include' });
     const j = await resp.json();
     if (j.success) {
       const rows = j.counterparties || [];
-      if (rows.length === 0) { counterpartyList.innerHTML = '<div class="small">No groups yet</div>'; return; }
-      counterpartyList.innerHTML = '';
-      rows.forEach(cp => {
-        const el = document.createElement('div'); el.className = 'counterparty-item';
-        el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center">
-          <div><strong>${escapeHtml(cp.canonical_name)}</strong><div class="small">tx: ${cp.tx_count} · debit: ${(cp.total_debit_paise/100).toFixed(2)} · credit: ${(cp.total_credit_paise/100).toFixed(2)}</div></div>
-          <div><button class="btn btn-ghost" data-id="${cp.id}">View</button></div>
-        </div>`;
-        counterpartyList.appendChild(el);
-      });
+      cpCountEl.textContent = String(rows.length);
     } else {
-      counterpartyList.innerHTML = '<div class="small">Failed to load</div>';
+      cpCountEl.textContent = '–';
     }
   } catch (e) {
-    counterpartyList.innerHTML = '<div class="small">Server error</div>';
+    cpCountEl.textContent = '–';
   }
 }
 
-/* Hook statementFormat to update dropzone hint */
-statementFormat.addEventListener('change', () => {
-  const val = statementFormat.value;
-  if (val === 'pdf') dropText.textContent = 'Drag & drop PDF files here or click to browse';
-  else if (val === 'txt') dropText.textContent = 'Drag & drop TXT files here or click to browse';
-  else dropText.textContent = 'Drag & drop PDF or TXT files here or click to browse';
-});
-
-/* Double-click to browse (alternate) */
-dropzone.addEventListener('dblclick', () => {
-  const ip = document.createElement('input'); ip.type='file'; ip.accept='.pdf,.txt,application/pdf,text/plain'; ip.multiple=true;
-  ip.onchange = ()=> handleFiles(ip.files);
-  ip.click();
-});
+/* ---------- Bind events ---------- */
+startBtn.addEventListener('click', startParse);
+refreshGroups.addEventListener('click', loadGroups);
 
 /* Init */
 renderQueue();
 loadAccounts();
 loadGroups();
-setSteps('Ready — choose PDFs/TXTs to upload.');
+setSteps('Ready — drop a CSV or click to browse. See convert.html to convert .txt → .csv.');
+setStatus('Idle');
+
 </script>
-<script>
-// === CSV Upload / Preview / Send ===
-// Assumes variables from your page exist:
-//   API_URL, CSRF, accountSelect, file input handling, renderQueue() ... etc.
-// Adds CSV handling on top of existing file flow.
-
-(function(){
-  /* helper CSV parser (simple RFC4180-ish) */
-  function parseCSV(text) {
-    // returns array of rows (each row is array of cells)
-    const rows = [];
-    let i = 0, len = text.length;
-    let cur = '', row = [], inQuotes = false;
-    while (i < len) {
-      const ch = text[i];
-      const nxt = text[i+1];
-      if (inQuotes) {
-        if (ch === '"') {
-          if (nxt === '"') { cur += '"'; i += 2; continue; } // escaped quote
-          inQuotes = false; i++; continue;
-        } else {
-          cur += ch; i++; continue;
-        }
-      } else {
-        if (ch === '"') { inQuotes = true; i++; continue; }
-        if (ch === ',') { row.push(cur); cur = ''; i++; continue; }
-        if (ch === '\r') { i++; continue; }
-        if (ch === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; i++; continue; }
-        cur += ch; i++;
-      }
-    }
-    // final cell
-    if (inQuotes) {
-      // malformed csv - still flush
-      row.push(cur);
-      rows.push(row);
-    } else {
-      if (cur !== '' || row.length>0) { row.push(cur); rows.push(row); }
-    }
-    return rows;
-  }
-
-  function headerIndexMap(headers) {
-    const map = {};
-    headers.forEach((h, idx) => {
-      map[h.trim().toLowerCase()] = idx;
-    });
-    return map;
-  }
-
-  // Validate presence of required headers (allow some alternates)
-  function validateHeaders(hmap) {
-    const required = [
-      ['txn_date','date'],
-      ['narration'],
-      ['counterparty'],
-      ['txn_type'],
-      ['amount_rupees','amount','amount_paise'],
-      ['debit_paise','debit'],
-      ['credit_paise','credit'],
-      ['balance_rupees','balance','balance_paise']
-    ];
-    const missing = [];
-    for (const alt of required) {
-      const ok = alt.some(a => a && (a in hmap));
-      if (!ok) missing.push(alt[0]);
-    }
-    return missing;
-  }
-
-  function rowsToObjects(rows) {
-    if (!rows || rows.length === 0) return [];
-    const headers = rows[0].map(h => (h||'').trim());
-    const hmap = headerIndexMap(headers);
-    const missing = validateHeaders(hmap);
-    if (missing.length) throw new Error('CSV missing required columns: ' + missing.join(', '));
-    const objs = [];
-    for (let r = 1; r < rows.length; r++) {
-      const row = rows[r];
-      // Skip empty lines
-      if (row.join('').trim() === '') continue;
-      const get = (names) => {
-        if (!Array.isArray(names)) names = [names];
-        for (const n of names) {
-          if (n && (n in hmap)) return (row[hmap[n]]||'').trim();
-        }
-        return '';
-      };
-      const o = {
-        txn_date: get(['txn_date','date']),
-        value_date: get(['value_date']),
-        counterparty: get(['counterparty']),
-        narration: get(['narration']),
-        reference: get(['reference','reference_number']),
-        txn_type: get(['txn_type']),
-        amount_rupees: get(['amount_rupees','amount']),
-        debit_paise: get(['debit_paise','debit']),
-        credit_paise: get(['credit_paise','credit']),
-        balance_rupees: get(['balance_rupees','balance'])
-      };
-      objs.push(o);
-    }
-    return objs;
-  }
-
-  function previewCSV(text) {
-    try {
-      const rows = parseCSV(text);
-      const objs = rowsToObjects(rows);
-      return { rows, objs, error: null };
-    } catch (err) {
-      return { rows: null, objs: null, error: err.message || String(err) };
-    }
-  }
-
-  // UI elements used in your page:
-  const csvInput = document.createElement('input');
-  csvInput.type = 'file';
-  csvInput.accept = '.csv,text/csv';
-  csvInput.multiple = false;
-
-  // Add a small CSV upload button to the dropzone (or reuse existing dropzone logic)
-  const csvBtn = document.createElement('button');
-  csvBtn.type = 'button';
-  csvBtn.textContent = 'Upload CSV';
-  csvBtn.title = 'Upload pre-parsed CSV (converted by the converter)';
-  csvBtn.style.marginLeft = '8px';
-  // append near startBtn if available
-  const startBtn = document.getElementById('startUpload');
-  if (startBtn && startBtn.parentNode) startBtn.parentNode.appendChild(csvBtn);
-
-  csvBtn.addEventListener('click', ()=> csvInput.click());
-  csvInput.addEventListener('change', async (ev) => {
-    const f = ev.target.files[0];
-    if (!f) return;
-    if (f.size > MAX_BYTES) { alert('CSV too large'); return; }
-    const txt = await f.text();
-    const pr = previewCSV(txt);
-    if (pr.error) { alert('CSV parse error: ' + pr.error); return; }
-    // show preview (first 10) - reuse preview element if exists
-    const previewEl = document.getElementById('preview');
-    if (previewEl) {
-      previewEl.textContent = pr.objs.slice(0,10).map(r => `${r.txn_date} | ${r.counterparty} | ${r.txn_type} | ${r.amount_rupees} | ${r.narration}`).join('\n');
-    }
-    if (!confirm(`CSV seems valid with ${pr.objs.length} rows. Upload to server and insert into DB?`)) return;
-
-    // upload CSV as text to API action=upload_csv
-    try {
-      const fd = new FormData();
-      fd.append('csv_text', txt);
-      fd.append('filename', f.name);
-      fd.append('csrf_token', CSRF);
-      const accountId = accountSelect.value ? accountSelect.value : '';
-      if (accountId) fd.append('account_id', accountId);
-
-      // optional: allow chunked progress UI by using fetch; show steps
-      const status = document.getElementById('status0') || document.getElementById('stepsLog');
-      if (status) status.textContent = 'Uploading CSV...';
-      const resp = await fetch(API_URL + '?action=upload_csv', { method: 'POST', credentials: 'include', body: fd });
-      const j = await resp.json();
-      if (j.success) {
-        if (status) status.textContent = `CSV uploaded, statement_id=${j.statement_id}. Parsing completed: ${j.parse_status||'parsed'}. Inserted ${j.inserted_rows||'?' } rows.`;
-        alert('CSV uploaded and processed successfully.');
-        // optionally refresh groups/accounts
-        if (typeof loadGroups === 'function') loadGroups();
-      } else {
-        alert('Server error: ' + (j.error || 'unknown'));
-      }
-    } catch (err) {
-      console.error(err);
-      alert('Upload failed: ' + (err && err.message ? err.message : String(err)));
-    }
-  });
-
-  // also support pasting CSV text into inputText and a new button "Upload pasted CSV"
-  const pasteBtn = document.createElement('button');
-  pasteBtn.type = 'button';
-  pasteBtn.textContent = 'Upload pasted CSV';
-  pasteBtn.style.marginLeft = '8px';
-  if (startBtn && startBtn.parentNode) startBtn.parentNode.appendChild(pasteBtn);
-  pasteBtn.addEventListener('click', async () => {
-    const txt = document.getElementById('inputText').value || '';
-    if (!txt.trim()) return alert('Paste CSV text into the large textarea first.');
-    const pr = previewCSV(txt);
-    if (pr.error) return alert('CSV parse error: ' + pr.error);
-    if (!confirm(`CSV seems valid with ${pr.objs.length} rows. Upload now?`)) return;
-    try {
-      const fd = new FormData();
-      fd.append('csv_text', txt);
-      fd.append('filename', 'pasted.csv');
-      fd.append('csrf_token', CSRF);
-      const accountId = accountSelect.value ? accountSelect.value : '';
-      if (accountId) fd.append('account_id', accountId);
-      const status = document.getElementById('stepsLog');
-      if (status) status.textContent = 'Uploading CSV...';
-      const resp = await fetch(API_URL + '?action=upload_csv', { method: 'POST', credentials: 'include', body: fd });
-      const j = await resp.json();
-      if (j.success) {
-        if (status) status.textContent = `CSV uploaded, statement_id=${j.statement_id}. Parsing completed: ${j.parse_status||'parsed'}. Inserted ${j.inserted_rows||'?' } rows.`;
-        alert('CSV uploaded and processed successfully.');
-        if (typeof loadGroups === 'function') loadGroups();
-      } else {
-        alert('Server error: ' + (j.error || 'unknown'));
-      }
-    } catch (err) {
-      console.error(err);
-      alert('Upload failed: ' + (err && err.message ? err.message : String(err)));
-    }
-  });
-
-})(); // IIFE end
-</script>
-
 </body>
 </html>
