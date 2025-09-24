@@ -51,6 +51,7 @@ try {
         case 'upload_text': api_upload_text($db); break;
         case 'status': api_status($db); break;
         case 'add_account': api_add_account($db); break;
+        case 'list_statements': api_list_statements($db); break;
         case 'list_accounts': api_list_accounts($db); break;
         case 'get_groups': api_get_groups($db); break;
         case 'promote': api_promote($db); break;
@@ -99,6 +100,19 @@ function api_search_statements($db) {
         jsonResp(200, ['success'=>true, 'statements'=>$rows]);
     } catch (Throwable $e) {
         jsonResp(500, ['success'=>false, 'error'=>'Server error']);
+    }
+}
+function api_list_statements($db) {
+    $userId = require_auth($db);
+    try {
+        $rows = $db->fetchAll('SELECT id, filename, storage_path, file_size, file_sha256, parse_status, parsed_at, created_at FROM statements WHERE user_id = ? ORDER BY id DESC LIMIT 500', [$userId]);
+        // sanitize: don't expose full path to client
+        foreach ($rows as &$r) {
+            if (isset($r['storage_path'])) unset($r['storage_path']);
+        }
+        jsonResp(200, ['success'=>true,'statements'=>$rows]);
+    } catch (Throwable $e) {
+        jsonResp(500, ['success'=>false,'error'=>'Server error']);
     }
 }
 function api_delete_statement($db) {
