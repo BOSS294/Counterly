@@ -762,21 +762,17 @@ function parse_csv_and_insert($db, $stmtId, $userId, $storedPath) {
         $debit_paise = null;
         $credit_paise = null;
 
-        // 1) debit column (if present)
+        // debit column present
         if ($c_debit_paise !== null && isset($row[$c_debit_paise]) && trim((string)$row[$c_debit_paise]) !== '') {
             $d = trim((string)$row[$c_debit_paise]);
-
-            // If header explicitly says "debit_paise" treat as integer paise (allow commas)
             if ($has_debit_paise_header) {
-                // remove thousands separators then cast to int
                 $debit_paise = is_numeric(str_replace(',', '', $d)) ? intval(str_replace(',', '', $d)) : normalize_amount_to_paise($d);
             } else {
-                // column likely in rupees or decimal style -> convert rupees to paise
                 $debit_paise = normalize_amount_to_paise($d);
             }
         }
 
-        // 2) credit column (if present)
+        // credit column present
         if ($c_credit_paise !== null && isset($row[$c_credit_paise]) && trim((string)$row[$c_credit_paise]) !== '') {
             $cval = trim((string)$row[$c_credit_paise]);
             if ($has_credit_paise_header) {
@@ -786,34 +782,22 @@ function parse_csv_and_insert($db, $stmtId, $userId, $storedPath) {
             }
         }
 
-        // 3) fallback to amount / amount_rupees column if both debit/credit are empty
-        if (($debit_paise === null || $debit_paise === 0) && ($credit_paise === null || $credit_paise === 0)) {
-            if ($c_amount_rupees !== null && isset($row[$c_amount_rupees]) && trim((string)$row[$c_amount_rupees]) !== '') {
-                $amtRaw = trim((string)$row[$c_amount_rupees]);
-
-                // Decide whether amtRaw is already paise integer (header says amount_paise) or rupees (amount_rupees / amount)
-                if ($has_amount_paise_header) {
-                    // treat as paise integer (remove commas)
-                    $ap = is_numeric(str_replace(',', '', $amtRaw)) ? intval(str_replace(',', '', $amtRaw)) : normalize_amount_to_paise($amtRaw);
-                } else {
-                    // treat as rupees / decimal and convert to paise
-                    $ap = normalize_amount_to_paise($amtRaw);
-                }
-
-                // Use txn_type hint if present; otherwise conservative default: put into debit (old behavior)
-                if ($rec['txn_type'] === 'debit' || $rec['txn_type'] === 'dr') {
-                    $debit_paise = $ap;
-                } elseif ($rec['txn_type'] === 'credit' || $rec['txn_type'] === 'cr') {
-                    $credit_paise = $ap;
-                } else {
-                    // when no txn_type hint, keep previous code's safe default (trust CSV generator / or treat as debit)
-                    $debit_paise = $ap;
-                }
+        // fallback: amount column may be "amount_paise" (integer) or "amount"/"amount_rupees" (rupees)
+        if (($debit_paise === null || $debit_paise === 0) && ($credit_paise === null || $credit_paise === 0)
+            && $c_amount_rupees !== null && isset($row[$c_amount_rupees]) && trim((string)$row[$c_amount_rupees]) !== '') {
+            $amtRaw = trim((string)$row[$c_amount_rupees]);
+            if ($has_amount_paise_header) {
+                $ap = is_numeric(str_replace(',', '', $amtRaw)) ? intval(str_replace(',', '', $amtRaw)) : normalize_amount_to_paise($amtRaw);
+            } else {
+                $ap = normalize_amount_to_paise($amtRaw);
             }
+            if ($rec['txn_type'] === 'debit' || $rec['txn_type'] === 'dr') $debit_paise = $ap;
+            else if ($rec['txn_type'] === 'credit' || $rec['txn_type'] === 'cr') $credit_paise = $ap;
+            else $debit_paise = $ap; // legacy default
         }
 
-        // 4) final normalization: ensure numeric ints or nulls
-        $debit_paise = ($debit_paise === null) ? null : intval($debit_paise);
+        // final normalization
+        $debit_paise  = ($debit_paise  === null) ? null : intval($debit_paise);
         $credit_paise = ($credit_paise === null) ? null : intval($credit_paise);
 
         if (($debit_paise === null || $debit_paise === 0) && ($credit_paise === null || $credit_paise === 0)) {
