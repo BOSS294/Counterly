@@ -9,24 +9,18 @@ if (!isset($_SESSION['user_id'])) {
 if (empty($_SESSION['csrf_token'])) $_SESSION['csrf_token'] = bin2hex(random_bytes(16));
 $csrf = $_SESSION['csrf_token'];
 ?>
-<!doctype html>
-<html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Upload CSV Bank Statement — UI</title>
 
-<!-- load project-wide base styles first (you asked to place this after base.css) -->
-<link rel="stylesheet" href="/assets/css/base.css" />
 
 <!-- Page-specific styles only (no :root or body overrides) -->
 <style>
-/* Full-viewport layout */
-html, body { height: 100%; margin: 0; padding: 0; }
+
 .page-shell { min-height:100vh; display:flex; flex-direction:column; gap:18px; padding:24px; box-sizing:border-box; }
 
 /* Large, wide layout */
-.uploader-viewport { display:flex; gap:20px; align-items:stretch; width:100%; height:calc(100vh - 80px); }
+/* give extra room for top nav; lower height slightly */
+.uploader-viewport { display:flex; gap:20px; align-items:stretch; width:100%; height:calc(100vh - 140px); }
+
 .left-panel { flex:1 1 70%; display:flex; flex-direction:column; gap:16px; min-width:0; }
 .right-panel { width:420px; max-width:38%; display:flex; flex-direction:column; gap:12px; }
 
@@ -52,6 +46,8 @@ html, body { height: 100%; margin: 0; padding: 0; }
 .btn-primary { background:linear-gradient(90deg, rgba(255,169,77,0.12), rgba(124,58,237,0.08)); color:var(--text, #fff); border:1px solid rgba(255,169,77,0.06); }
 .btn-ghost { background:transparent; border:1px solid rgba(255,255,255,0.04); color:rgba(255,255,255,0.9); }
 .btn:active { transform: translateY(1px); }
+/* full-width ghost button style */
+.btn.btn-ghost[style] { justify-content:center; }
 
 /* File list (compact) */
 .file-list { display:flex; flex-direction:column; gap:10px; }
@@ -110,7 +106,15 @@ html, body { height: 100%; margin: 0; padding: 0; }
         </div>
 
         <div id="dropzone" class="dropzone" tabindex="0" aria-label="Drop CSV file here">
-          <div class="icon">📥</div>
+          <div class="icon" aria-hidden="true">
+            <!-- simple box/download SVG icon -->
+            <svg width="56" height="56" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <rect x="2" y="3" width="20" height="14" rx="2" stroke="currentColor" stroke-width="1.4" fill="none" opacity="0.95"/>
+              <path d="M7 10l5 5 5-5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+              <path d="M12 3v6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+            </svg>
+          </div>
+
           <div class="title">Drop CSV file here</div>
           <div class="sub">Drop a CSV file (the one produced by the converter) or click to browse. The page accepts only <strong>.csv</strong> files. After upload the server will parse and insert transactions.</div>
           <div class="sub hint">If you have a <code>.txt</code> HDFC statement, first convert it to CSV using <a href="convert.html" class="convert-link">convert.html</a>.</div>
@@ -119,6 +123,7 @@ html, body { height: 100%; margin: 0; padding: 0; }
         <div class="controls">
           <div style="display:flex;gap:8px;align-items:center;">
             <label class="small"><input id="optNullSide" type="checkbox" /> Upload with NULL for non-used side</label>
+            <button id="addAccountBtn" class="btn btn-ghost" type="button" style="margin-left:8px">Add account</button>
           </div>
 
           <div style="flex:1"></div>
@@ -126,6 +131,7 @@ html, body { height: 100%; margin: 0; padding: 0; }
           <button id="startUpload" class="btn btn-primary">Start Parse</button>
           <button id="clearFiles" class="btn btn-ghost">Clear</button>
         </div>
+
 
         <div id="fileList" class="file-list" aria-live="polite"></div>
         <div id="stepsLog" class="steps-log small">No CSV uploaded yet.</div>
@@ -152,16 +158,33 @@ html, body { height: 100%; margin: 0; padding: 0; }
           <div class="value" id="cpCount">—</div>
         </div>
 
-        <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
-          <button id="refreshGroups" class="btn btn-ghost">Refresh Count</button>
-          <div style="flex:1"></div>
-          <div class="hint">Only counts are shown here. View the Groups page for details.</div>
+        <div style="margin-top:8px">
+          <div style="margin-bottom:8px">
+            <div class="hint">Only counts are shown here. View the Groups page for details.</div>
+          </div>
+          <button id="refreshGroups" class="btn btn-ghost" style="width:100%; padding:10px 12px">Refresh Count</button>
         </div>
+
       </div>
 
       <div class="card">
         <div style="font-weight:800">Status</div>
         <div id="statusBox" class="small" style="margin-top:8px">Idle</div>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- Add Account modal -->
+<div id="addAccountModal" class="modal" aria-hidden="true">
+  <div class="mcard" role="dialog" aria-modal="true" aria-labelledby="addAccountTitle">
+    <h3 id="addAccountTitle" style="margin:0 0 8px 0">Add Bank Account</h3>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <input id="bankName" class="select" placeholder="Bank name (e.g. HDFC Bank)" />
+      <input id="acctMask" class="select" placeholder="Account masked (e.g. ****4404) (optional)" />
+      <input id="ifsc" class="select" placeholder="IFSC (optional)" />
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+        <button id="closeAddAccount" class="btn btn-ghost">Close</button>
+        <button id="createAccount" class="btn btn-primary">Create</button>
       </div>
     </div>
   </div>
@@ -271,6 +294,54 @@ clearBtn.addEventListener('click', () => {
   setSteps('Cleared.');
   setStatus('Idle');
 });
+/* --- Add Account modal handlers --- */
+const addAccountBtn = document.getElementById('addAccountBtn');
+const addAccountModal = document.getElementById('addAccountModal');
+const closeAddAccount = document.getElementById('closeAddAccount');
+const createAccount = document.getElementById('createAccount');
+const bankName = document.getElementById('bankName');
+const acctMask = document.getElementById('acctMask');
+const ifsc = document.getElementById('ifsc');
+
+if (addAccountBtn) {
+  addAccountBtn.addEventListener('click', () => {
+    if (addAccountModal) { addAccountModal.classList.add('show'); addAccountModal.setAttribute('aria-hidden','false'); bankName.focus(); }
+  });
+}
+if (closeAddAccount) {
+  closeAddAccount.addEventListener('click', () => {
+    if (addAccountModal) { addAccountModal.classList.remove('show'); addAccountModal.setAttribute('aria-hidden','true'); }
+  });
+}
+if (createAccount) {
+  createAccount.addEventListener('click', async () => {
+    const bank = (bankName.value || '').trim();
+    if (!bank) return alert('Enter bank name');
+    createAccount.disabled = true;
+    try {
+      const resp = await fetch(API_URL + '?action=add_account', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ bank_name: bank, account_number_masked: (acctMask.value || '').trim(), ifsc: (ifsc.value || '').trim() })
+      });
+      const j = await resp.json();
+      if (j.success) {
+        // hide modal and refresh accounts
+        if (addAccountModal) { addAccountModal.classList.remove('show'); addAccountModal.setAttribute('aria-hidden','true'); }
+        bankName.value = ''; acctMask.value = ''; ifsc.value = '';
+        await loadAccounts();
+        alert('Account created');
+      } else {
+        alert('Failed: ' + (j.error || 'unknown'));
+      }
+    } catch (e) {
+      alert('Server error');
+    } finally {
+      createAccount.disabled = false;
+    }
+  });
+}
 
 /* ---------- Upload & parse CSV ---------- */
 async function startParse() {
@@ -424,5 +495,3 @@ setSteps('Ready — drop a CSV or click to browse. See convert.html to convert .
 setStatus('Idle');
 
 </script>
-</body>
-</html>
