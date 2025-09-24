@@ -103,7 +103,7 @@
      POST ?action=upload_csv (multipart/form-data) used by Upload CSV button
 */
 
-const API_URL = (typeof API_URL !== 'undefined') ? API_URL : '/Assets/Website/Api/upload_api.php';
+const API_URL =  '/Assets/Website/Api/upload_api.php';
 const CSRF_TOKEN = (typeof CSRF !== 'undefined') ? CSRF : '';
 
 /* State */
