@@ -56,6 +56,11 @@ try {
         case 'promote': api_promote($db); break;
         case 'merge_alias': api_merge_alias($db); break;
         case 'upload_csv': api_upload_csv($db); break;
+        case 'search_statements': api_search_statements($db); break;
+        case 'statement_metrics': api_statement_metrics($db); break;
+        case 'refresh_statement': api_refresh_statement($db); break;
+        case 'delete_statement': api_delete_statement($db); break;
+        case 'rename_statement': api_rename_statement($db); break;
         default: jsonResp(400, ['success'=>false, 'error'=>'Unknown action']);
     }
 } catch (Throwable $e) {
@@ -77,6 +82,207 @@ function validate_csrf($token): bool {
 }
 
 // ---------------- API implementations ----------------
+// Search and list statements (server-side paging optional)
+function api_search_statements($db) {
+    $userId = require_auth($db);
+    $q = trim((string)($_GET['q'] ?? ''));
+    $page = max(1, intval($_GET['page'] ?? 1));
+    $page_size = max(10, min(200, intval($_GET['page_size'] ?? 50)));
+    try {
+        if ($q === '') {
+            // fallback to list statements
+            $rows = $db->fetchAll('SELECT id, filename, file_size, parse_status, parsed_at, tx_count, created_at FROM statements WHERE user_id = ? ORDER BY id DESC LIMIT ?', [$userId, $page_size]);
+        } else {
+            $like = '%' . str_replace('%','\%',$q) . '%';
+            $rows = $db->fetchAll('SELECT id, filename, file_size, parse_status, parsed_at, tx_count, created_at FROM statements WHERE user_id = ? AND (filename LIKE ? OR id = ?) ORDER BY id DESC LIMIT ?', [$userId, $like, intval($q), $page_size]);
+        }
+        jsonResp(200, ['success'=>true, 'statements'=>$rows]);
+    } catch (Throwable $e) {
+        jsonResp(500, ['success'=>false, 'error'=>'Server error']);
+    }
+}
+function api_delete_statement($db) {
+    $userId = require_auth($db);
+    $data = json_decode(file_get_contents('php://input'), true) ?: [];
+    $sid = intval($data['statement_id'] ?? 0);
+    $csrf = $data['csrf_token'] ?? null;
+    if (!validate_csrf($csrf)) jsonResp(403, ['success'=>false,'error'=>'Invalid CSRF token']);
+    if (!$sid) jsonResp(400, ['success'=>false,'error'=>'Missing statement_id']);
+    try {
+        $row = $db->fetch('SELECT storage_path FROM statements WHERE id = ? AND user_id = ? LIMIT 1', [$sid, $userId]);
+        if (!$row) jsonResp(404, ['success'=>false,'error'=>'Not found']);
+        $path = $row['storage_path'] ?? null;
+        // delete DB row and any associated uploaded file (best-effort)
+        $db->beginTransaction();
+        $db->execute('DELETE FROM statements WHERE id = ? AND user_id = ?', [$sid, $userId]);
+        $db->execute('DELETE FROM transactions WHERE statement_id = ?', [$sid]); // remove associated txns
+        $db->commit();
+        if ($path && is_file($path)) @unlink($path);
+        $db->logAudit('delete_statement','statement',$sid,[], $userId);
+        jsonResp(200, ['success'=>true]);
+    } catch (Throwable $e) {
+        try { $db->rollback(); } catch (Throwable $_) {}
+        jsonResp(500, ['success'=>false,'error'=>'Server error']);
+    }
+}
+
+function api_rename_statement($db) {
+    $userId = require_auth($db);
+    $data = json_decode(file_get_contents('php://input'), true) ?: [];
+    $sid = intval($data['statement_id'] ?? 0);
+    $newName = trim((string)($data['filename'] ?? ''));
+    $csrf = $data['csrf_token'] ?? null;
+    if (!validate_csrf($csrf)) jsonResp(403, ['success'=>false,'error'=>'Invalid CSRF token']);
+    if (!$sid || $newName === '') jsonResp(400, ['success'=>false,'error'=>'Missing params']);
+    try {
+        $updated = $db->execute('UPDATE statements SET filename = ?, updated_at = NOW() WHERE id = ? AND user_id = ?', [$newName, $sid, $userId]);
+        $db->logAudit('rename_statement','statement',$sid,['filename'=>$newName], $userId);
+        jsonResp(200, ['success'=>true]);
+    } catch (Throwable $e) {
+        jsonResp(500, ['success'=>false,'error'=>'Server error']);
+    }
+}
+function api_statement_metrics($db) {
+    $userId = require_auth($db);
+    $sid = intval($_GET['sid'] ?? 0);
+    if (!$sid) jsonResp(400, ['success'=>false,'error'=>'Missing sid']);
+    try {
+        // verify ownership
+        $stmt = $db->fetch('SELECT id, parsed_at FROM statements WHERE id = ? AND user_id = ? LIMIT 1', [$sid, $userId]);
+        if (!$stmt) jsonResp(404, ['success'=>false,'error'=>'Not found']);
+        $txCountRow = $db->fetch('SELECT COUNT(*) as cnt FROM transactions WHERE statement_id = ?', [$sid]);
+        $cpCountRow = $db->fetch('SELECT COUNT(DISTINCT COALESCE(counterparty_id,0)) as cnt FROM transactions WHERE statement_id = ?', [$sid]);
+        jsonResp(200, [
+            'success'=>true,
+            'tx_count' => intval($txCountRow['cnt'] ?? 0),
+            'counterparty_count' => intval($cpCountRow['cnt'] ?? 0),
+            'parsed_at' => $stmt['parsed_at'] ?? null
+        ]);
+    } catch (Throwable $e) {
+        jsonResp(500, ['success'=>false,'error'=>'Server error']);
+    }
+}
+
+/**
+ * Refresh statement checks & optional automated fixes.
+ * POST JSON: { statement_id, csrf_token, apply_fix: bool }
+ *
+ * Behavior:
+ *  - Scans transactions for the statement and detects issues:
+ *    * txn_checksum mismatch
+ *    * amount_paise == 0 while debit_paise or credit_paise present
+ *    * txn_type not matching debit/credit presence
+ *  - If apply_fix == true, applies safe fixes inside a transaction:
+ *    * set amount_paise = max(debit_paise, credit_paise) if zero
+ *    * set txn_type to 'debit'/'credit' based on debit/credit
+ *    * recompute txn_checksum
+ *  - After fixes, runs run_grouping_scanner and updates statement metadata.
+ */
+function api_refresh_statement($db) {
+    $userId = require_auth($db);
+    $data = json_decode(file_get_contents('php://input'), true) ?: [];
+    $sid = intval($data['statement_id'] ?? 0);
+    $csrf = $data['csrf_token'] ?? null;
+    $apply = !empty($data['apply_fix']);
+    if (!validate_csrf($csrf)) jsonResp(403, ['success'=>false,'error'=>'Invalid CSRF token']);
+    if (!$sid) jsonResp(400, ['success'=>false,'error'=>'Missing statement_id']);
+
+    try {
+        // verify statement ownership and get account_id
+        $stmtRow = $db->fetch('SELECT id, account_id, storage_path FROM statements WHERE id = ? AND user_id = ? LIMIT 1', [$sid, $userId]);
+        if (!$stmtRow) jsonResp(404, ['success'=>false,'error'=>'Not found']);
+
+        $account_id = isset($stmtRow['account_id']) ? intval($stmtRow['account_id']) : null;
+
+        // fetch transactions for statement
+        $txs = $db->fetchAll('SELECT id, txn_date, amount_paise, debit_paise, credit_paise, txn_type, reference_number, narration, txn_checksum FROM transactions WHERE statement_id = ?', [$sid]);
+        if ($txs === false) $txs = [];
+
+        $issues = [];
+        $fixes = [];
+        foreach ($txs as $t) {
+            $tid = intval($t['id']);
+            $amt = isset($t['amount_paise']) ? intval($t['amount_paise']) : 0;
+            $d = isset($t['debit_paise']) ? intval($t['debit_paise']) : 0;
+            $c = isset($t['credit_paise']) ? intval($t['credit_paise']) : 0;
+            $tt = strtolower(trim((string)$t['txn_type'] ?? ''));
+            $ref = $t['reference_number'] ?? null;
+            $narr = $t['narration'] ?? '';
+
+            // recompute checksum candidate
+            $expected_ck = compute_txn_checksum($account_id, $t['txn_date'], $amt, $ref, $narr);
+
+            if (($t['txn_checksum'] ?? '') !== $expected_ck) {
+                $issues[] = ['type'=>'checksum_mismatch','transaction_id'=>$tid,'current'=>$t['txn_checksum'] ?? '','expected'=>$expected_ck];
+                if ($apply) $fixes[] = ['transaction_id'=>$tid,'set'=>['txn_checksum'=>$expected_ck]];
+            }
+
+            // amount missing but debit/credit present
+            if (($amt === 0) && ($d > 0 || $c > 0)) {
+                $inferred = max($d, $c);
+                $issues[] = ['type'=>'missing_amount','transaction_id'=>$tid,'inferred_amount_paise'=>$inferred,'debit_paise'=>$d,'credit_paise'=>$c];
+                if ($apply) $fixes[] = ['transaction_id'=>$tid,'set'=>['amount_paise'=>$inferred]];
+            }
+
+            // txn_type mismatch
+            $should_tt = 'other';
+            if ($d > 0 && $c == 0) $should_tt = 'debit';
+            else if ($c > 0 && $d == 0) $should_tt = 'credit';
+            if ($should_tt !== 'other' && $should_tt !== $tt) {
+                $issues[] = ['type'=>'txn_type_mismatch','transaction_id'=>$tid,'current'=>$tt,'expected'=>$should_tt];
+                if ($apply) $fixes[] = ['transaction_id'=>$tid,'set'=>['txn_type'=>$should_tt]];
+            }
+        }
+
+        // If apply==true, perform updates inside a transaction (batch)
+        $summary = ['issues_found' => count($issues), 'fixes_applied' => 0];
+        if ($apply && !empty($fixes)) {
+            $db->beginTransaction();
+            try {
+                foreach ($fixes as $f) {
+                    $tid = intval($f['transaction_id']);
+                    $sets = $f['set'];
+                    $params = [];
+                    $sqlParts = [];
+                    foreach ($sets as $col => $val) {
+                        $sqlParts[] = "$col = ?";
+                        $params[] = $val;
+                    }
+                    // if we changed amount or txn_type we also recompute checksum afterwards
+                    $params[] = $tid;
+                    $sql = "UPDATE transactions SET " . implode(', ', $sqlParts) . ", updated_at = NOW() WHERE id = ? LIMIT 1";
+                    $db->execute($sql, $params);
+
+                    // recompute checksum row now that changes persisted for this row
+                    $rowNow = $db->fetch('SELECT account_id, txn_date, amount_paise, reference_number, narration FROM transactions WHERE id = ? LIMIT 1', [$tid]);
+                    $acct = $rowNow['account_id'] ?? $account_id;
+                    $ck = compute_txn_checksum($acct, $rowNow['txn_date'], intval($rowNow['amount_paise'] ?? 0), $rowNow['reference_number'] ?? null, $rowNow['narration'] ?? '');
+                    $db->execute('UPDATE transactions SET txn_checksum = ?, updated_at = NOW() WHERE id = ?', [$ck, $tid]);
+
+                    $summary['fixes_applied']++;
+                }
+
+                // run grouping scanner to refresh counterparties
+                run_grouping_scanner($db, $userId);
+
+                // update statement tx_count if necessary
+                try {
+                    $count = $db->fetch('SELECT COUNT(*) as c FROM transactions WHERE statement_id = ?', [$sid])['c'] ?? 0;
+                    $db->execute('UPDATE statements SET tx_count = ?, updated_at = NOW() WHERE id = ?', [intval($count), $sid]);
+                } catch (Throwable $_) {}
+
+                $db->commit();
+            } catch (Throwable $e) {
+                try { $db->rollback(); } catch (Throwable $_) {}
+                jsonResp(500, ['success'=>false,'error'=>'Failed to apply fixes','dbg'=> $e->getMessage()]);
+            }
+        }
+
+        return jsonResp(200, ['success'=>true,'issues'=>$issues,'summary'=>$summary]);
+    } catch (Throwable $e) {
+        jsonResp(500, ['success'=>false,'error'=>'Server error','dbg'=>$e->getMessage()]);
+    }
+}
 
 function api_upload($db) {
     $userId = require_auth($db);
