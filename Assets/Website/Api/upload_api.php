@@ -725,6 +725,15 @@ function parse_csv_and_insert($db, $stmtId, $userId, $storedPath) {
     $c_credit_paise = $col(['credit_paise','credit']);
     $c_balance_rupees = $col(['balance_rupees','balance','balance_paise']);
     $c_raw_line = $col(['raw_line','raw','rawline']);
+    // --- Header-type flags: detect whether CSV headers already use paise integer columns ---
+    $has_amount_paise_header  = array_key_exists('amount_paise', $hmap);
+    $has_debit_paise_header   = array_key_exists('debit_paise', $hmap);
+    $has_credit_paise_header  = array_key_exists('credit_paise', $hmap);
+    $has_balance_paise_header = array_key_exists('balance_paise', $hmap);
+
+    // Also detect rupee-named headers for clarity (optional)
+    $has_amount_rupees_header = array_key_exists('amount_rupees', $hmap) || array_key_exists('amount', $hmap);
+    $has_balance_rupees_header = array_key_exists('balance_rupees', $hmap) || array_key_exists('balance', $hmap);
 
     // minimal header validation
     if ($c_txn_date === null || $c_narration === null) {
@@ -747,24 +756,66 @@ function parse_csv_and_insert($db, $stmtId, $userId, $storedPath) {
         $rec['reference'] = ($c_reference !== null && isset($row[$c_reference])) ? trim((string)$row[$c_reference]) : null;
         $rec['txn_type'] = ($c_txn_type !== null && isset($row[$c_txn_type])) ? strtolower(trim((string)$row[$c_txn_type])) : null;
         $rec['raw_line'] = ($c_raw_line !== null && isset($row[$c_raw_line])) ? trim((string)$row[$c_raw_line]) : ($rec['txn_date'] . ' ' . $rec['narration']);
-        // amounts: priority: debit_paise/credit_paise columns, else amount_rupees
+        // amounts: priority: debit_paise/credit_paise columns, else amount (which might be rupees or paise)
+        // We use header flags ($has_*_paise_header, $has_amount_rupees_header) to avoid double-conversion.
+
         $debit_paise = null;
         $credit_paise = null;
+
+        // 1) debit column (if present)
         if ($c_debit_paise !== null && isset($row[$c_debit_paise]) && trim((string)$row[$c_debit_paise]) !== '') {
-            // debit column may be already paise or rupees; try to detect decimals
             $d = trim((string)$row[$c_debit_paise]);
-            // if it contains '.' assume rupees -> convert; if digits-only large, treat as paise
-            if (strpos($d, '.') !== false || strpos($d, ',') !== false) {
-                $debit_paise = normalize_amount_to_paise($d);
+
+            // If header explicitly says "debit_paise" treat as integer paise (allow commas)
+            if ($has_debit_paise_header) {
+                // remove thousands separators then cast to int
+                $debit_paise = is_numeric(str_replace(',', '', $d)) ? intval(str_replace(',', '', $d)) : normalize_amount_to_paise($d);
             } else {
-                // integer token: assume rupees if length <= 7? safer to assume rupees unless huge
+                // column likely in rupees or decimal style -> convert rupees to paise
                 $debit_paise = normalize_amount_to_paise($d);
             }
         }
+
+        // 2) credit column (if present)
         if ($c_credit_paise !== null && isset($row[$c_credit_paise]) && trim((string)$row[$c_credit_paise]) !== '') {
             $cval = trim((string)$row[$c_credit_paise]);
-            $credit_paise = normalize_amount_to_paise($cval);
+            if ($has_credit_paise_header) {
+                $credit_paise = is_numeric(str_replace(',', '', $cval)) ? intval(str_replace(',', '', $cval)) : normalize_amount_to_paise($cval);
+            } else {
+                $credit_paise = normalize_amount_to_paise($cval);
+            }
         }
+
+        // 3) fallback to amount / amount_rupees column if both debit/credit are empty
+        if (($debit_paise === null || $debit_paise === 0) && ($credit_paise === null || $credit_paise === 0)) {
+            if ($c_amount_rupees !== null && isset($row[$c_amount_rupees]) && trim((string)$row[$c_amount_rupees]) !== '') {
+                $amtRaw = trim((string)$row[$c_amount_rupees]);
+
+                // Decide whether amtRaw is already paise integer (header says amount_paise) or rupees (amount_rupees / amount)
+                if ($has_amount_paise_header) {
+                    // treat as paise integer (remove commas)
+                    $ap = is_numeric(str_replace(',', '', $amtRaw)) ? intval(str_replace(',', '', $amtRaw)) : normalize_amount_to_paise($amtRaw);
+                } else {
+                    // treat as rupees / decimal and convert to paise
+                    $ap = normalize_amount_to_paise($amtRaw);
+                }
+
+                // Use txn_type hint if present; otherwise conservative default: put into debit (old behavior)
+                if ($rec['txn_type'] === 'debit' || $rec['txn_type'] === 'dr') {
+                    $debit_paise = $ap;
+                } elseif ($rec['txn_type'] === 'credit' || $rec['txn_type'] === 'cr') {
+                    $credit_paise = $ap;
+                } else {
+                    // when no txn_type hint, keep previous code's safe default (trust CSV generator / or treat as debit)
+                    $debit_paise = $ap;
+                }
+            }
+        }
+
+        // 4) final normalization: ensure numeric ints or nulls
+        $debit_paise = ($debit_paise === null) ? null : intval($debit_paise);
+        $credit_paise = ($credit_paise === null) ? null : intval($credit_paise);
+
         if (($debit_paise === null || $debit_paise === 0) && ($credit_paise === null || $credit_paise === 0)) {
             // fallback to amount_rupees column
             if ($c_amount_rupees !== null && isset($row[$c_amount_rupees]) && trim((string)$row[$c_amount_rupees]) !== '') {
@@ -821,7 +872,18 @@ function parse_csv_and_insert($db, $stmtId, $userId, $storedPath) {
             else if (in_array($tt, ['cr','credit'])) $tt = 'credit';
             else $tt = 'other';
         }
-
+        $balance_paise = null;
+        if ($c_balance_rupees !== null && isset($row[$c_balance_rupees]) && trim((string)$row[$c_balance_rupees]) !== '') {
+            $balRaw = trim((string)$row[$c_balance_rupees]);
+            if ($has_balance_paise_header) {
+                $balance_paise = is_numeric(str_replace(',', '', $balRaw)) ? intval(str_replace(',', '', $balRaw)) : normalize_amount_to_paise($balRaw);
+            } else {
+                // treat as rupees and convert
+                $balance_paise = normalize_amount_to_paise($balRaw);
+            }
+        } else {
+            $balance_paise = 0;
+        }
         // fallback: compute amount_paise as debit or credit
         $amount_paise = ($debit_paise !== null && $debit_paise > 0) ? $debit_paise : (($credit_paise !== null && $credit_paise > 0) ? $credit_paise : 0);
 
@@ -835,7 +897,7 @@ function parse_csv_and_insert($db, $stmtId, $userId, $storedPath) {
             'amount_paise' => intval($amount_paise),
             'debit_paise' => $debit_paise === null ? null : intval($debit_paise),
             'credit_paise' => $credit_paise === null ? null : intval($credit_paise),
-            'balance_paise' => ($c_balance_rupees !== null && isset($row[$c_balance_rupees]) && trim((string)$row[$c_balance_rupees]) !== '') ? normalize_amount_to_paise($row[$c_balance_rupees]) : 0
+            'balance_paise' => $balance_paise
         ];
         $rowCount++;
     } // end while
