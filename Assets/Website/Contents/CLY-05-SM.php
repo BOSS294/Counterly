@@ -8,6 +8,7 @@
       <button id="btnRefreshList" class="btn btn-ghost">Refresh</button>
       <div style="width:10px"></div>
       <button id="btnUploadCsv" class="btn btn-primary">Upload CSV</button>
+      <button id="downloadSample" class="btn btn-ghost">Download CSV Sample</button>
     </div>
   </div>
 
@@ -334,4 +335,68 @@ function escapeHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,
 
 /* Initialize */
 loadList(); loadCpCount();
+
+document.getElementById('downloadSample').addEventListener('click', () => {
+  const sample =
+`txn_date,value_date,counterparty,narration,reference,txn_type,amount_rupees,debit_paise,credit_paise,balance_rupees,raw_line
+2025-09-01,2025-09-01,John Doe,UPI-JOHN DOE-DOEJOHN123@OKBANK-UBIN0000001-123456789012-UPI,0000123456789012,credit,500.00,0,50000,505.33,01/09/25  UPI-JOHN DOE-DOEJOHN123@OKBANK-UBIN0000001-123456789012-UPI ...
+2025-09-02,2025-09-02,Acme Stores,UPI-ACME STORES-ACMESTORE@YESB-YESB0000002-234567890123-UPI,0000234567890123,debit,200.00,20000,0,305.33,02/09/25  UPI-ACME STORES-ACMESTORE@YESB-YESB0000002-234567890123-UPI ...
+2025-09-03,2025-09-03,Jane Smith,UPI-JANE SMITH-SMITHJANE@AXIS-AXIS0000003-345678901234-UPI,0000345678901234,credit,1000.00,0,100000,1305.33,03/09/25  UPI-JANE SMITH-SMITHJANE@AXIS-AXIS0000003-345678901234-UPI ...
+2025-09-04,2025-09-04,Global Mart,UPI-GLOBAL MART-GLOBALMART@HDFC-HDFC0000004-456789012345-UPI,0000456789012345,debit,150.00,15000,0,1155.33,04/09/25  UPI-GLOBAL MART-GLOBALMART@HDFC-HDFC0000004-456789012345-UPI ...
+2025-09-05,2025-09-05,Alpha Services,UPI-ALPHA SERVICES-ALPHASERV@ICICI-ICICI0000005-567890123456-UPI,0000567890123456,credit,250.00,0,25000,1405.33,05/09/25  UPI-ALPHA SERVICES-ALPHASERV@ICICI-ICICI0000005-567890123456-UPI ...
+`;
+  const blob = new Blob([sample], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'sample_statement.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+
+// Improve status updates
+function setSteps(msg){
+  stepsLog.textContent = msg;
+  stepsLog.style.color = '#ffa94d';
+  stepsLog.style.fontWeight = 'bold';
+}
+
+async function processCSVFile(file, idx, accountId){
+  const statusEl = document.getElementById('status'+idx);
+  const progEl = document.querySelector('#prog'+idx+' i');
+  try {
+    setSteps('Reading CSV file...');
+    statusEl.textContent = 'Reading CSV file...';
+    const txt = await file.text();
+    if (!txt || txt.trim().length < 10) { setSteps('Empty CSV file'); statusEl.textContent = 'Empty CSV file'; return; }
+    setSteps('Uploading CSV...');
+    statusEl.textContent = 'Uploading CSV...';
+    progEl.style.width = '20%';
+    const fd = new FormData();
+    fd.append('csv_text', txt);
+    fd.append('filename', file.name);
+    fd.append('csrf_token', CSRF);
+    if (accountId) fd.append('account_id', accountId);
+    setSteps('Sending to server...');
+    statusEl.textContent = 'Sending to server...';
+    const res = await fetch(API_URL + '?action=upload_csv', { method: 'POST', credentials: 'include', body: fd });
+    setSteps('Waiting for server response...');
+    statusEl.textContent = 'Waiting for server response...';
+    const j = await res.json();
+    if (j.success) {
+      progEl.style.width = '100%';
+      setSteps('Upload complete. Server is parsing the CSV...');
+      statusEl.textContent = 'Uploaded (CSV) — Parsing';
+    } else {
+      setSteps('Server error: ' + (j.error||'unknown'));
+      statusEl.textContent = 'Server error: ' + (j.error||'unknown');
+    }
+    return;
+  } catch (err) {
+    setSteps('Error: ' + (err.message || 'unknown'));
+    statusEl.textContent = 'Error: ' + (err.message || 'unknown');
+  }
+}
 </script>
