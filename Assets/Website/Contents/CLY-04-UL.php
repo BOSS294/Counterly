@@ -130,6 +130,7 @@ $csrf = $_SESSION['csrf_token'];
           <select id="accountSelect" class="select small" style="min-width:220px"><option>Loading accounts…</option></select>
           <button id="startUpload" class="btn btn-primary">Start Parse</button>
           <button id="clearFiles" class="btn btn-ghost">Clear</button>
+          <button id="downloadSample" class="btn btn-ghost" type="button">Download CSV Sample</button>
         </div>
 
 
