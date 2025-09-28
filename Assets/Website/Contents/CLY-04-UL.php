@@ -487,6 +487,25 @@ async function loadGroups(){
 /* ---------- Bind events ---------- */
 startBtn.addEventListener('click', startParse);
 refreshGroups.addEventListener('click', loadGroups);
+document.getElementById('downloadSample').addEventListener('click', () => {
+  const sample =
+`txn_date,value_date,counterparty,narration,reference,txn_type,amount_rupees,debit_paise,credit_paise,balance_rupees,raw_line
+2025-09-01,2025-09-01,John Doe,UPI-JOHN DOE-DOEJOHN123@OKBANK-UBIN0000001-123456789012-UPI,0000123456789012,credit,500.00,0,50000,505.33,01/09/25  UPI-JOHN DOE-DOEJOHN123@OKBANK-UBIN0000001-123456789012-UPI ...
+2025-09-02,2025-09-02,Acme Stores,UPI-ACME STORES-ACMESTORE@YESB-YESB0000002-234567890123-UPI,0000234567890123,debit,200.00,20000,0,305.33,02/09/25  UPI-ACME STORES-ACMESTORE@YESB-YESB0000002-234567890123-UPI ...
+2025-09-03,2025-09-03,Jane Smith,UPI-JANE SMITH-SMITHJANE@AXIS-AXIS0000003-345678901234-UPI,0000345678901234,credit,1000.00,0,100000,1305.33,03/09/25  UPI-JANE SMITH-SMITHJANE@AXIS-AXIS0000003-345678901234-UPI ...
+2025-09-04,2025-09-04,Global Mart,UPI-GLOBAL MART-GLOBALMART@HDFC-HDFC0000004-456789012345-UPI,0000456789012345,debit,150.00,15000,0,1155.33,04/09/25  UPI-GLOBAL MART-GLOBALMART@HDFC-HDFC0000004-456789012345-UPI ...
+2025-09-05,2025-09-05,Alpha Services,UPI-ALPHA SERVICES-ALPHASERV@ICICI-ICICI0000005-567890123456-UPI,0000567890123456,credit,250.00,0,25000,1405.33,05/09/25  UPI-ALPHA SERVICES-ALPHASERV@ICICI-ICICI0000005-567890123456-UPI ...
+`;
+  const blob = new Blob([sample], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'sample_statement.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
 
 /* Init */
 renderQueue();
